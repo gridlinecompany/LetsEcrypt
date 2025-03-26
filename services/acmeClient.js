@@ -2,6 +2,10 @@ const acme = require('acme-client');
 const forge = require('node-forge');
 const fs = require('fs');
 const path = require('path');
+const dotenv = require('dotenv');
+
+// Load environment variables
+dotenv.config();
 
 // For storing challenge responses
 const challengeResponses = new Map();
@@ -36,8 +40,15 @@ function generateAccountKey() {
 async function getClient(email) {
   const accountKey = generateAccountKey();
   
+  // Use production or staging based on environment variable
+  const directoryUrl = process.env.ACME_DIRECTORY === 'production' 
+    ? acme.directory.letsencrypt.production 
+    : acme.directory.letsencrypt.staging;
+  
+  console.log(`Using ACME directory: ${process.env.ACME_DIRECTORY || 'staging'}`);
+  
   const client = new acme.Client({
-    directoryUrl: acme.directory.letsencrypt.staging, // Use staging for testing
+    directoryUrl,
     accountKey
   });
   
