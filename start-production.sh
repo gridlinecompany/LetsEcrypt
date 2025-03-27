@@ -1,26 +1,39 @@
 #!/bin/bash
 
-# Navigate to application directory
-cd "$(dirname "$0")"
+# Production startup script for Let's Encrypt Certificate Generator
 
-# Install dependencies if needed
-npm install
+# Make script stop on first error
+set -e
 
-# Start application with PM2 in production mode
+# Environment variables for production
 export NODE_ENV=production
-export PORT=3000
-export DOMAIN=freesslcerts.com
 export ACME_DIRECTORY=production
-export SESSION_SECRET=$(openssl rand -hex 32)
 
-# Stop existing instance if running
-pm2 stop letsencrypt-app 2>/dev/null || true
+# Check if .env file exists, create it if it doesn't
+if [ ! -f .env ]; then
+  echo "Creating .env file for production..."
+  cat > .env << EOL
+PORT=3000
+NODE_ENV=production
+SESSION_SECRET=$(openssl rand -hex 32)
+DOMAIN=freesslcerts.com
+ACME_DIRECTORY=production
+EOL
+fi
 
-# Start the application
-pm2 start server.js --name "letsencrypt-app" --env production
+# Install dependencies if node_modules doesn't exist
+if [ ! -d "node_modules" ]; then
+  echo "Installing dependencies..."
+  npm install --production
+fi
 
-# Save PM2 configuration to survive system restarts
-pm2 save
+# Start the application with PM2
+echo "Starting application with PM2..."
+pm2 start server.js --name letsencrypt-app
 
-echo "Application started in production mode!"
-echo "Visit https://freesslcerts.com to access your application" 
+echo "Application is running in production mode!"
+echo "To view logs: pm2 logs letsencrypt-app"
+echo "To restart: pm2 restart letsencrypt-app"
+
+# Exit successfully
+exit 0 

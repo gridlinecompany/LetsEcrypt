@@ -46,7 +46,10 @@ async function getClient(email) {
     ? acme.directory.letsencrypt.production 
     : acme.directory.letsencrypt.staging;
   
-  console.log(`Using ACME directory: ${process.env.ACME_DIRECTORY || 'staging'}`);
+  // Only log in development mode
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`Using ACME directory: ${process.env.ACME_DIRECTORY || 'staging'}`);
+  }
   
   const client = new acme.Client({
     directoryUrl,
@@ -59,7 +62,12 @@ async function getClient(email) {
       termsOfServiceAgreed: true,
       contact: [`mailto:${email}`]
     });
-    console.log('Account registered successfully or already exists');
+    
+    // Only log in development mode
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('Account registered successfully or already exists');
+    }
+    
     return client;
   } catch (error) {
     console.error('Error registering account:', error);
@@ -122,45 +130,24 @@ async function prepareDnsChallenge(client, domain, order) {
     throw new Error(`No DNS-01 challenge found for domain ${domain}`);
   }
   
-  try {
-    // Get the key authorization and DNS record value
-    const keyAuthorization = await client.getChallengeKeyAuthorization(dnsChallenge);
-    const dnsRecordValue = acme.crypto.createDnsRecordText(keyAuthorization);
-    
-    // Store the challenge information
-    const challengeInfo = {
-      token: dnsChallenge.token,
-      keyAuthorization,
-      dnsRecordValue,
-      challenge: dnsChallenge
-    };
-    
-    dnsChallengeValues.set(domain, challengeInfo);
-    
-    // Ensure we never return PLACEHOLDER_VALUE
-    if (!dnsRecordValue || dnsRecordValue === `dns-challenge-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`) {
-      console.warn('Invalid DNS record value detected, generating fallback');
-      const fallbackValue = `letsencrypt-challenge-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-      
-      return {
-        recordName: `_acme-challenge.${domain}`,
-        recordValue: fallbackValue
-      };
-    }
-    
-    return {
-      recordName: `_acme-challenge.${domain}`,
-      recordValue: dnsRecordValue
-    };
-  } catch (error) {
-    console.error('Error preparing DNS challenge value:', error);
-    // Generate a fallback value for development/testing
-    const fallbackValue = `fallback-challenge-${Date.now()}`;
-    return {
-      recordName: `_acme-challenge.${domain}`,
-      recordValue: fallbackValue
-    };
-  }
+  // Get the key authorization and DNS record value
+  const keyAuthorization = await client.getChallengeKeyAuthorization(dnsChallenge);
+  const dnsRecordValue = acme.crypto.createDnsRecordText(keyAuthorization);
+  
+  // Store the challenge information
+  const challengeInfo = {
+    token: dnsChallenge.token,
+    keyAuthorization,
+    dnsRecordValue,
+    challenge: dnsChallenge
+  };
+  
+  dnsChallengeValues.set(domain, challengeInfo);
+  
+  return {
+    recordName: `_acme-challenge.${domain}`,
+    recordValue: dnsRecordValue
+  };
 }
 
 // Complete DNS challenge after DNS record has been set
@@ -230,56 +217,31 @@ async function generateCertificateHttp(domain, email) {
 
 // Prepare DNS challenge - returns data for DNS record
 async function prepareDnsChallengeForDomain(domain, email) {
-  try {
-    // Get client with registered account
-    const client = await getClient(email);
-    const { csrPem, privateKeyPem } = generateCsr(domain);
-    
-    // Create a certificate order
-    const order = await client.createOrder({
-      identifiers: [{ type: 'dns', value: domain }]
-    });
-    
-    // Store CSR and key for later use
-    dnsChallengeValues.set(`${domain}_csr`, { csrPem, privateKeyPem, order });
-    
-    // Prepare DNS challenge
-    const dnsData = await prepareDnsChallenge(client, domain, order);
-    
-    // Log the actual values being returned
+  // Get client with registered account
+  const client = await getClient(email);
+  const { csrPem, privateKeyPem } = generateCsr(domain);
+  
+  // Create a certificate order
+  const order = await client.createOrder({
+    identifiers: [{ type: 'dns', value: domain }]
+  });
+  
+  // Store CSR and key for later use
+  dnsChallengeValues.set(`${domain}_csr`, { csrPem, privateKeyPem, order });
+  
+  // Prepare DNS challenge
+  const dnsData = await prepareDnsChallenge(client, domain, order);
+  
+  // Log the actual values being returned (only in development)
+  if (process.env.NODE_ENV !== 'production') {
     console.log('DNS Challenge Data:', {
       domain,
       recordName: dnsData.recordName,
       recordValue: dnsData.recordValue
     });
-    
-    // Ensure we have a valid challenge value (not undefined/null)
-    if (!dnsData.recordValue) {
-      console.warn('No DNS record value was generated! Using fallback value.');
-      
-      // Generate a mock DNS challenge value for development/testing
-      const mockValue = `mock-challenge-value-${Date.now()}`;
-      return {
-        recordName: `_acme-challenge.${domain}`,
-        recordValue: mockValue
-      };
-    }
-    
-    return dnsData;
-  } catch (error) {
-    console.error('Error preparing DNS challenge:', error);
-    
-    // In case of error, return a fallback for development/testing
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('Using fallback DNS challenge value due to error');
-      return {
-        recordName: `_acme-challenge.${domain}`,
-        recordValue: `fallback-challenge-value-${Date.now()}`
-      };
-    }
-    
-    throw error;
   }
+  
+  return dnsData;
 }
 
 // Complete DNS challenge and get certificate

@@ -68,6 +68,30 @@ app.get('/register', (req, res) => {
 app.use('/users', userRoutes);
 app.use('/certificates', requireAuth, certificateRoutes);
 
+// Add production error handling middleware
+if (isProduction) {
+  // Production error handler - no stacktraces leaked to user
+  app.use(function(err, req, res, next) {
+    console.error(err.stack);
+    res.status(err.status || 500);
+    res.render('error', {
+      message: 'An unexpected error occurred. Please try again later.',
+      user: req.session.user
+    });
+  });
+} else {
+  // Development error handler - with stacktraces
+  app.use(function(err, req, res, next) {
+    console.error(err.stack);
+    res.status(err.status || 500);
+    res.render('error', {
+      message: err.message,
+      error: err,
+      user: req.session.user
+    });
+  });
+}
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on ${isProduction ? 'https' : 'http'}://${process.env.DOMAIN || 'localhost'}:${PORT}`);

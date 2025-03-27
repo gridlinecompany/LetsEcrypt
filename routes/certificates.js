@@ -107,42 +107,25 @@ router.post('/generate', async (req, res) => {
     } 
     // For DNS-01 challenge
     else if (verificationMethod === 'dns') {
-      try {
-        // Start the ACME DNS challenge process
-        const dnsChallenge = await acmeClient.prepareDnsChallengeForDomain(domain, email);
-        
-        // Store domain info in session for the verification step
-        req.session.pendingDnsVerification = {
-          domain,
-          email,
-          timestamp: Date.now()
-        };
-        
-        // Make sure we don't have placeholder value
-        if (dnsChallenge.recordValue === `dns-challenge-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`) {
-          // Generate a unique challenge value based on timestamp
-          dnsChallenge.recordValue = `letsencrypt-challenge-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-          console.log('Generated new DNS challenge value:', dnsChallenge.recordValue);
+      // Start the ACME DNS challenge process
+      const dnsChallenge = await acmeClient.prepareDnsChallengeForDomain(domain, email);
+      
+      // Store domain info in session for the verification step
+      req.session.pendingDnsVerification = {
+        domain,
+        email,
+        timestamp: Date.now()
+      };
+      
+      res.render('dns-instructions', {
+        domain,
+        user: req.session.user,
+        dnsRecord: {
+          type: 'TXT',
+          name: dnsChallenge.recordName,
+          value: dnsChallenge.recordValue  // This is the real Let's Encrypt challenge value
         }
-        
-        res.render('dns-instructions', {
-          domain,
-          user: req.session.user,
-          dnsRecord: {
-            type: 'TXT',
-            name: dnsChallenge.recordName,
-            value: dnsChallenge.recordValue  // This should be the actual Let's Encrypt challenge value
-          }
-        });
-      } catch (error) {
-        console.error('Error preparing DNS challenge:', error);
-        res.render('certificate-result', { 
-          success: false, 
-          error: `Failed to prepare DNS challenge: ${error.message}`,
-          domain,
-          user: req.session.user
-        });
-      }
+      });
     }
   } catch (error) {
     console.error('Certificate generation error:', error);
