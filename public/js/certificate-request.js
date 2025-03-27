@@ -33,16 +33,21 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Show DNS record information
             const dnsInfoHtml = `
-              <div class="dns-instructions bg-gray-100 p-4 rounded mt-4">
-                <h3 class="font-bold">DNS Record Information:</h3>
-                <p><strong>Record Type:</strong> TXT</p>
-                <p><strong>Record Name:</strong> <code>${data.dnsData.recordName}</code></p>
-                <p><strong>Record Value:</strong> <code>${data.dnsData.recordValue}</code></p>
-                <div class="mt-4">
-                  <p>After adding this record, please allow time for DNS propagation (can take 5 minutes to several hours).</p>
-                  <button id="verify-dns-btn" class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
-                    Verify & Complete Certificate
-                  </button>
+              <div class="card mt-4 mb-4">
+                <div class="card-header bg-light">
+                  <h3 class="h5 mb-0">DNS Record Information</h3>
+                </div>
+                <div class="card-body">
+                  <p><strong>Record Type:</strong> TXT</p>
+                  <p><strong>Record Name:</strong> <code>${data.dnsData.recordName}</code></p>
+                  <p><strong>Record Value:</strong> <code>${data.dnsData.recordValue}</code></p>
+                  <hr>
+                  <div class="mt-3">
+                    <p class="mb-3">After adding this record, please allow time for DNS propagation (can take 5 minutes to several hours).</p>
+                    <button id="verify-dns-btn" class="btn btn-primary">
+                      Verify & Complete Certificate
+                    </button>
+                  </div>
                 </div>
               </div>
             `;
@@ -133,19 +138,25 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!statusContainer) return;
     
     const statusClass = {
-      'info': 'bg-blue-100 text-blue-800',
-      'success': 'bg-green-100 text-green-800',
-      'error': 'bg-red-100 text-red-800',
-      'warning': 'bg-yellow-100 text-yellow-800'
+      'info': 'alert-info',
+      'success': 'alert-success',
+      'error': 'alert-danger',
+      'warning': 'alert-warning'
     };
     
     // Append new status message
     const statusHtml = `
-      <div class="status-update ${statusClass[type]} p-3 rounded mt-2">
+      <div class="alert ${statusClass[type]} mb-3">
         ${message}
       </div>
     `;
     
+    // Clear any default content if this is the first update
+    if (statusContainer.querySelector('.text-muted')) {
+      statusContainer.innerHTML = '';
+    }
+    
+    // Add the new status at the top
     statusContainer.innerHTML = statusHtml + statusContainer.innerHTML;
   }
 }); 

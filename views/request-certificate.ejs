@@ -43,7 +43,7 @@
           <div class="card-body">
             <h2 class="card-title text-center mb-4">Request SSL/TLS Certificate</h2>
             
-            <form action="/certificates/generate" method="POST">
+            <form id="certificate-form">
               <div class="mb-3">
                 <label for="domain" class="form-label">Domain Name</label>
                 <input type="text" class="form-control" id="domain" name="domain" placeholder="example.com" required>
@@ -59,7 +59,7 @@
               <div class="mb-4">
                 <label class="form-label">Verification Method</label>
                 <div class="form-check">
-                  <input class="form-check-input" type="radio" name="verificationMethod" id="httpVerification" value="http" checked>
+                  <input class="form-check-input" type="radio" name="challengeType" id="httpVerification" value="http" checked>
                   <label class="form-check-label" for="httpVerification">
                     HTTP Verification
                   </label>
@@ -70,7 +70,7 @@
                 </div>
                 
                 <div class="form-check mt-2">
-                  <input class="form-check-input" type="radio" name="verificationMethod" id="dnsVerification" value="dns">
+                  <input class="form-check-input" type="radio" name="challengeType" id="dnsVerification" value="dns">
                   <label class="form-check-label" for="dnsVerification">
                     DNS Verification
                   </label>
@@ -109,9 +109,9 @@
             </form>
 
             <!-- Add this status container below the form -->
-            <div id="status-container" class="mt-6 p-4 border border-gray-200 rounded-lg min-h-[100px]">
-              <h3 class="text-lg font-medium mb-2">Status</h3>
-              <p class="text-gray-600">Submit the form to request a certificate</p>
+            <div id="status-container" class="mt-4 p-3 border rounded min-h-100">
+              <h3 class="h5 mb-3">Status</h3>
+              <p class="text-muted">Submit the form to request a certificate</p>
             </div>
           </div>
         </div>
@@ -132,6 +132,15 @@
       const dnsRadio = document.getElementById('dnsVerification');
       const httpAlert = document.getElementById('httpAlert');
       const dnsAlert = document.getElementById('dnsAlert');
+      
+      // Initial setup based on checked state
+      if (httpRadio.checked) {
+        httpAlert.classList.remove('d-none');
+        dnsAlert.classList.add('d-none');
+      } else if (dnsRadio.checked) {
+        httpAlert.classList.add('d-none');
+        dnsAlert.classList.remove('d-none');
+      }
       
       httpRadio.addEventListener('change', function() {
         httpAlert.classList.remove('d-none');
