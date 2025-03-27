@@ -162,15 +162,28 @@ async function completeDnsChallenge(client, domain) {
     // Check if the DNS record exists and is correct before proceeding
     console.log(`Verifying DNS record for _acme-challenge.${domain}`);
     
-    // Notify Let's Encrypt that we're ready to complete the challenge
+    // First, verify DNS propagation ourselves before notifying Let's Encrypt
+    await verifyDnsPropagation(domain, challengeInfo.dnsRecordValue);
+    
+    // Now notify Let's Encrypt that we're ready to complete the challenge
     console.log('Notifying Let\'s Encrypt to verify the challenge...');
     await client.completeChallenge(challengeInfo.challenge);
     
     // Wait for the CA to validate the challenge
     console.log('Waiting for Let\'s Encrypt to validate the challenge...');
-    await client.waitForValidStatus(challengeInfo.challenge);
-    
-    console.log('DNS challenge validated successfully!');
+    try {
+      await client.waitForValidStatus(challengeInfo.challenge);
+      console.log('DNS challenge validated successfully!');
+    } catch (validationError) {
+      // If validation fails, wait longer and try again one more time
+      console.log('First validation attempt failed. Waiting 30 seconds for further DNS propagation and trying again...');
+      await new Promise(resolve => setTimeout(resolve, 30000)); // 30 second delay
+      
+      // Try completing the challenge again
+      await client.completeChallenge(challengeInfo.challenge);
+      await client.waitForValidStatus(challengeInfo.challenge);
+      console.log('DNS challenge validated successfully on second attempt!');
+    }
     
     // Clean up
     dnsChallengeValues.delete(domain);
@@ -181,11 +194,61 @@ async function completeDnsChallenge(client, domain) {
     // More specific error message based on the type of error
     if (error.message.includes('Invalid response')) {
       console.error('The DNS record may not have propagated yet or is incorrect.');
+      console.error('Please check:');
+      console.error(`1. The TXT record name is exactly: _acme-challenge.${domain}`);
+      console.error(`2. The TXT record value is exactly: ${challengeInfo.dnsRecordValue}`);
+      console.error('3. The record has had enough time to propagate (can take up to 24-48 hours)');
+      console.error('4. There are no quote marks or other formatting in the TXT value');
     } else if (error.message.includes('timeout')) {
       console.error('The verification timed out. DNS propagation can take time.');
     }
     throw error;
   }
+}
+
+// Function to verify DNS propagation
+async function verifyDnsPropagation(domain, expectedValue) {
+  const dns = require('dns').promises;
+  const recordName = `_acme-challenge.${domain}`;
+  
+  console.log(`Checking if DNS record has propagated: ${recordName}`);
+  
+  const maxRetries = 3;
+  const retryDelay = 10000; // 10 seconds between retries
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      // Try to resolve the TXT record
+      const records = await dns.resolveTxt(recordName);
+      const flatRecords = records.map(r => r.join('')); // TXT records can be split
+      
+      console.log(`Found TXT records: ${JSON.stringify(flatRecords)}`);
+      
+      if (flatRecords.includes(expectedValue)) {
+        console.log('✓ DNS record found and matches expected value');
+        return true;
+      }
+      
+      console.log(`Attempt ${i + 1}/${maxRetries}: DNS record found but value doesn't match expected value.`);
+      console.log(`Expected: ${expectedValue}`);
+      console.log(`Found: ${flatRecords.join(', ')}`);
+      
+      if (i < maxRetries - 1) {
+        console.log(`Waiting ${retryDelay/1000} seconds before retrying...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    } catch (error) {
+      console.log(`Attempt ${i + 1}/${maxRetries}: DNS record not found. Error: ${error.message}`);
+      
+      if (i < maxRetries - 1) {
+        console.log(`Waiting ${retryDelay/1000} seconds before retrying...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    }
+  }
+  
+  console.log('⚠️ Could not verify DNS propagation locally after multiple attempts');
+  console.log('Proceeding with Let\'s Encrypt verification, but it may fail if DNS hasn\'t propagated globally');
 }
 
 // Generate certificate using HTTP-01 challenge
@@ -339,5 +402,6 @@ module.exports = {
   generateCertificateHttp,
   prepareDnsChallengeForDomain,
   completeDnsChallengeAndGetCertificate,
-  getChallengeResponse
+  getChallengeResponse,
+  verifyDnsPropagation
 }; 
