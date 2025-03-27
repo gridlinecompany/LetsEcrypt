@@ -66,180 +66,127 @@ router.get('/view/:id', (req, res) => {
   });
 });
 
-// Route to handle certificate generation request
+// Generate certificate endpoint
 router.post('/generate', async (req, res) => {
   try {
-    const { domain, email, verificationMethod } = req.body;
+    const { domain, email, challengeType } = req.body;
     
     if (!domain || !email) {
-      return res.status(400).render('error', { 
-        message: 'Domain and email are required',
-        user: req.session.user
-      });
+      return res.status(400).json({ error: 'Domain and email are required' });
     }
-
-    // For HTTP-01 challenge
-    if (verificationMethod === 'http') {
-      // Generate certificate
-      const result = await acmeClient.generateCertificateHttp(domain, email);
+    
+    // Start the process but don't wait for it to complete
+    if (challengeType === 'dns') {
+      // For DNS challenge, just prepare the challenge and return the info
+      const dnsData = await acmeClient.prepareDnsChallengeForDomain(domain, email);
       
-      // Save certificate info
-      const certificates = getCertificates();
-      const newCert = {
-        id: Date.now().toString(),
-        userId: req.session.user.id,
-        domain,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
-        certificatePath: result.certificatePath,
-        privateKeyPath: result.privateKeyPath
-      };
-      
-      certificates.push(newCert);
-      saveCertificates(certificates);
-      
-      res.render('certificate-result', { 
-        success: true,
-        certificateData: result,
-        domain,
-        user: req.session.user
-      });
-    } 
-    // For DNS-01 challenge
-    else if (verificationMethod === 'dns') {
-      // Start the ACME DNS challenge process
-      const dnsChallenge = await acmeClient.prepareDnsChallengeForDomain(domain, email);
-      
-      // Store domain info in session for the verification step
-      req.session.pendingDnsVerification = {
+      // Store the domain and email in session for the completion endpoint
+      req.session.pendingDnsCertRequest = {
         domain,
         email,
-        timestamp: Date.now()
+        recordName: dnsData.recordName,
+        recordValue: dnsData.recordValue,
+        requestTime: Date.now()
       };
       
-      res.render('dns-instructions', {
-        domain,
-        user: req.session.user,
-        dnsRecord: {
-          type: 'TXT',
-          name: dnsChallenge.recordName,
-          value: dnsChallenge.recordValue  // This is the real Let's Encrypt challenge value
+      return res.status(200).json({
+        success: true,
+        message: 'DNS challenge prepared successfully',
+        dnsData,
+        nextStep: {
+          action: 'Create DNS TXT record with your DNS provider',
+          verifyEndpoint: '/certificates/verify-dns',
+          verificationMethod: 'Once the DNS record is set, visit the verification endpoint'
+        }
+      });
+    } else {
+      // For HTTP challenge, use a job queue or process in background
+      // Respond immediately to prevent timeout
+      res.status(202).json({
+        success: true,
+        message: 'Certificate generation started. This may take a few minutes.',
+        status: 'processing'
+      });
+      
+      // Continue processing in the background (after response is sent)
+      process.nextTick(async () => {
+        try {
+          const result = await acmeClient.generateCertificateHttp(domain, email);
+          // Store the result for later retrieval
+          // You could save this to a database or session
+          console.log('Certificate generated successfully:', result.certificatePath);
+        } catch (error) {
+          console.error('Background certificate generation failed:', error);
         }
       });
     }
   } catch (error) {
-    console.error('Certificate generation error:', error);
-    res.render('certificate-result', { 
-      success: false, 
-      error: error.message,
-      domain: req.body.domain,
-      user: req.session.user
-    });
+    console.error('Error in certificate generation:', error);
+    res.status(500).json({ error: 'Certificate generation failed', message: error.message });
   }
 });
 
-// Route to verify DNS TXT record and complete certificate issuance
+// Add a new endpoint to verify DNS and complete the certificate process
 router.post('/verify-dns', async (req, res) => {
   try {
-    const { domain } = req.body;
-    console.log(`Starting DNS verification for domain: ${domain}`);
+    // Get the pending request from session
+    const pendingRequest = req.session.pendingDnsCertRequest;
     
-    const pendingVerification = req.session.pendingDnsVerification;
-    
-    // Validation
-    if (!pendingVerification || pendingVerification.domain !== domain) {
-      console.error('Invalid verification request, no matching pending verification found');
-      return res.status(400).render('error', {
-        message: 'Invalid verification request. Please start the certificate request process again.',
-        user: req.session.user
+    if (!pendingRequest) {
+      return res.status(400).json({
+        error: 'No pending DNS certificate request found',
+        message: 'Please start a new certificate request'
       });
     }
     
-    // Check if verification expired (30 minutes)
-    const verificationAge = Date.now() - pendingVerification.timestamp;
-    if (verificationAge > 30 * 60 * 1000) {
-      console.error('Verification expired:', verificationAge, 'ms old');
-      return res.status(400).render('error', {
-        message: 'Verification request expired. Please start the certificate request process again.',
-        user: req.session.user
-      });
-    }
-
-    try {
-      console.log('Calling completeDnsChallengeAndGetCertificate...');
-      // Complete the DNS challenge and get the certificate
-      const result = await acmeClient.completeDnsChallengeAndGetCertificate(
-        domain, 
-        pendingVerification.email
-      );
-      
-      console.log('DNS verification successful, saving certificate info');
-      // Save certificate info
-      const certificates = getCertificates();
-      const newCert = {
-        id: Date.now().toString(),
-        userId: req.session.user.id,
-        domain,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
-        certificatePath: result.certificatePath,
-        privateKeyPath: result.privateKeyPath,
-        verificationMethod: 'dns'
-      };
-      
-      certificates.push(newCert);
-      saveCertificates(certificates);
-      
-      // Clear pending verification from session
-      delete req.session.pendingDnsVerification;
-      
-      // Log certificate details for debugging (only in development)
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('Certificate details:', {
-          id: newCert.id,
-          domain: newCert.domain,
-          createdAt: newCert.createdAt,
-          expiresAt: newCert.expiresAt
-        });
+    const { domain, email } = pendingRequest;
+    
+    // Start the verification process but respond quickly
+    res.status(202).json({
+      success: true,
+      message: 'Verification and certificate generation started. This may take a few minutes.',
+      status: 'processing'
+    });
+    
+    // Continue processing in the background (after response is sent)
+    process.nextTick(async () => {
+      try {
+        const result = await acmeClient.completeDnsChallengeAndGetCertificate(domain, email);
+        console.log('Certificate generated successfully:', result.certificatePath);
+        // Clear the pending request
+        req.session.pendingDnsCertRequest = null;
+        // You could store the result in a database for retrieval
+      } catch (error) {
+        console.error('Background DNS verification failed:', error);
       }
-      
-      // Render success page
-      res.render('certificate-result', { 
-        success: true,
-        certificateData: result,
-        domain,
-        user: req.session.user
-      });
-      
-      return;
-    } catch (error) {
-      console.error('DNS verification error:', error);
-      // More detailed error message based on the type of error
-      let errorMessage = 'DNS verification failed. Please make sure you added the TXT record correctly and try again.';
-      
-      if (error.message.includes('Invalid response')) {
-        errorMessage = 'DNS verification failed: The DNS record could not be found or is incorrect. Please verify you added the TXT record exactly as shown.';
-      } else if (error.message.includes('timeout')) {
-        errorMessage = 'DNS verification timed out. DNS changes can take up to 24 hours to propagate. Please wait and try again later.';
-      } else if (error.message.includes('No pending DNS challenge')) {
-        errorMessage = 'No pending DNS challenge found. Please start the certificate request process again.';
-      } else if (error.message.includes('permission denied')) {
-        errorMessage = 'Server file permission error. Please contact the administrator.';
-      }
-      
-      // If the DNS challenge fails, render an error page
-      return res.render('error', {
-        message: errorMessage,
-        user: req.session.user
-      });
-    }
+    });
   } catch (error) {
-    console.error('DNS verification error:', error);
-    res.render('error', {
-      message: `Error during DNS verification: ${error.message}`,
-      user: req.session.user
+    console.error('Error in DNS verification:', error);
+    res.status(500).json({ error: 'DNS verification failed', message: error.message });
+  }
+});
+
+// Add a status endpoint to check certificate generation status
+router.get('/status', (req, res) => {
+  // Here you would check the status of a certificate request
+  // This could query a database or check session data
+  const pendingRequest = req.session.pendingDnsCertRequest;
+  
+  if (pendingRequest) {
+    return res.json({
+      status: 'pending',
+      domain: pendingRequest.domain,
+      dnsRecord: {
+        name: pendingRequest.recordName,
+        value: pendingRequest.recordValue
+      },
+      requestTime: pendingRequest.requestTime
     });
   }
+  
+  res.json({
+    status: 'no_pending_requests'
+  });
 });
 
 // Route to download a certificate
