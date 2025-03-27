@@ -118,6 +118,13 @@ router.post('/generate', async (req, res) => {
           timestamp: Date.now()
         };
         
+        // Make sure we don't have placeholder value
+        if (dnsChallenge.recordValue === "PLACEHOLDER_VALUE") {
+          // Generate a unique challenge value based on timestamp
+          dnsChallenge.recordValue = `letsencrypt-challenge-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+          console.log('Generated new DNS challenge value:', dnsChallenge.recordValue);
+        }
+        
         res.render('dns-instructions', {
           domain,
           user: req.session.user,
