@@ -138,7 +138,7 @@ async function prepareDnsChallenge(client, domain, order) {
     dnsChallengeValues.set(domain, challengeInfo);
     
     // Ensure we never return PLACEHOLDER_VALUE
-    if (!dnsRecordValue || dnsRecordValue === `dns-challenge-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`) {
+    if (!dnsRecordValue || dnsRecordValue === "PLACEHOLDER_VALUE") {
       console.warn('Invalid DNS record value detected, generating fallback');
       const fallbackValue = `letsencrypt-challenge-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
       
