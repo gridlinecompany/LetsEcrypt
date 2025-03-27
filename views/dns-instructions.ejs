@@ -47,6 +47,11 @@
               <strong>Domain:</strong> <%= domain %>
             </div>
             
+            <!-- Debug information -->
+            <div class="alert alert-secondary mb-4">
+              <strong>Debug - Record Value:</strong> <%= JSON.stringify(dnsRecord) %>
+            </div>
+            
             <h4 class="mb-3">1. Add this TXT record to your DNS settings</h4>
             
             <div class="card bg-light mb-4">
@@ -65,8 +70,8 @@
                 <div class="mb-2">
                   <label class="fw-bold">Value/Answer:</label>
                   <div class="input-group mt-1">
-                    <input type="text" class="form-control font-monospace" value="<%= dnsRecord.value %>" readonly>
-                    <button class="btn btn-outline-secondary copy-btn" type="button" data-copy="<%= dnsRecord.value %>">Copy</button>
+                    <input type="text" class="form-control font-monospace" value="<%= dnsRecord.value || 'No challenge value provided' %>" readonly>
+                    <button class="btn btn-outline-secondary copy-btn" type="button" data-copy="<%= dnsRecord.value || 'No challenge value provided' %>">Copy</button>
                   </div>
                 </div>
                 <div class="small text-muted">TTL: Use the default value (often 3600 seconds/1 hour)</div>
@@ -91,7 +96,7 @@
                       <li>Click "Add record"</li>
                       <li>Select "TXT" as the type</li>
                       <li>Enter <code><%= dnsRecord.name.replace(`_acme-challenge.${domain}`, '_acme-challenge') %></code> in the "Name" field</li>
-                      <li>Enter <code><%= dnsRecord.value %></code> in the "Content" field</li>
+                      <li>Enter <code><%= dnsRecord.value || 'No challenge value provided' %></code> in the "Content" field</li>
                       <li>Click "Save"</li>
                     </ol>
                   </div>
@@ -114,7 +119,7 @@
                         <ul>
                           <li>Type: TXT Record</li>
                           <li>Host: <code>_acme-challenge</code></li>
-                          <li>Value: <code><%= dnsRecord.value %></code></li>
+                          <li>Value: <code><%= dnsRecord.value || 'No challenge value provided' %></code></li>
                           <li>TTL: Automatic</li>
                         </ul>
                       </li>
@@ -138,7 +143,7 @@
                       <li>Scroll to the "Records" section</li>
                       <li>Click "Add" and select "TXT"</li>
                       <li>Enter <code>_acme-challenge</code> in the "Name" field</li>
-                      <li>Enter <code><%= dnsRecord.value %></code> in the "Value" field</li>
+                      <li>Enter <code><%= dnsRecord.value || 'No challenge value provided' %></code> in the "Value" field</li>
                       <li>Set TTL to 1 Hour</li>
                       <li>Click "Save"</li>
                     </ol>
