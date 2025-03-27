@@ -162,8 +162,13 @@ async function completeDnsChallenge(client, domain) {
     // Check if the DNS record exists and is correct before proceeding
     console.log(`Verifying DNS record for _acme-challenge.${domain}`);
     
-    // First, verify DNS propagation ourselves before notifying Let's Encrypt
-    await verifyDnsPropagation(domain, challengeInfo.dnsRecordValue);
+    // Try to verify DNS propagation ourselves, but don't fail if it doesn't succeed
+    try {
+      await verifyDnsPropagation(domain, challengeInfo.dnsRecordValue);
+    } catch (dnsError) {
+      console.log('Local DNS verification failed, but proceeding with Let\'s Encrypt verification anyway');
+      console.log(`Make sure your TXT record is set to: ${challengeInfo.dnsRecordValue}`);
+    }
     
     // Now notify Let's Encrypt that we're ready to complete the challenge
     console.log('Notifying Let\'s Encrypt to verify the challenge...');
@@ -213,8 +218,11 @@ async function verifyDnsPropagation(domain, expectedValue) {
   
   console.log(`Checking if DNS record has propagated: ${recordName}`);
   
-  const maxRetries = 3;
-  const retryDelay = 10000; // 10 seconds between retries
+  const maxRetries = 2;
+  const retryDelay = 5000; // 5 seconds between retries
+  
+  // Clean expected value - some DNS providers add quotes around values
+  const cleanExpectedValue = expectedValue.replace(/^"/, '').replace(/"$/, '').trim();
   
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -224,7 +232,12 @@ async function verifyDnsPropagation(domain, expectedValue) {
       
       console.log(`Found TXT records: ${JSON.stringify(flatRecords)}`);
       
-      if (flatRecords.includes(expectedValue)) {
+      // Clean the found records for comparison
+      const cleanedRecords = flatRecords.map(record => 
+        record.replace(/^"/, '').replace(/"$/, '').trim()
+      );
+      
+      if (flatRecords.includes(expectedValue) || cleanedRecords.includes(cleanExpectedValue)) {
         console.log('✓ DNS record found and matches expected value');
         return true;
       }
@@ -247,8 +260,8 @@ async function verifyDnsPropagation(domain, expectedValue) {
     }
   }
   
-  console.log('⚠️ Could not verify DNS propagation locally after multiple attempts');
-  console.log('Proceeding with Let\'s Encrypt verification, but it may fail if DNS hasn\'t propagated globally');
+  console.log('⚠️ Could not verify DNS propagation locally');
+  throw new Error('Local DNS verification failed - DNS propagation may not be complete');
 }
 
 // Generate certificate using HTTP-01 challenge
@@ -310,13 +323,13 @@ async function prepareDnsChallengeForDomain(domain, email) {
     const dnsData = await prepareDnsChallenge(client, domain, order);
     
     // Log the actual values being returned (only in development)
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('DNS Challenge Data:', {
-        domain,
-        recordName: dnsData.recordName,
-        recordValue: dnsData.recordValue
-      });
-    }
+    console.log('\n==== DNS Challenge Information ====');
+    console.log(`Domain: ${domain}`);
+    console.log(`TXT Record Name: ${dnsData.recordName}`);
+    console.log(`TXT Record Value: ${dnsData.recordValue}`);
+    console.log('\nIMPORTANT: Create this TXT record with your DNS provider');
+    console.log('NOTE: DNS propagation can take 5 minutes to 48 hours depending on your DNS provider');
+    console.log('====================================\n');
     
     return dnsData;
   } catch (error) {
