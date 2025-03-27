@@ -9,6 +9,7 @@ dotenv.config();
 
 // For storing challenge responses
 const challengeResponses = new Map();
+const dnsChallengeValues = new Map();
 
 // Directory for storing certificates
 const CERT_DIR = path.join(__dirname, '../certificates');
@@ -81,7 +82,93 @@ function generateCsr(domain) {
   return { csrPem, privateKeyPem };
 }
 
-async function generateCertificate(domain, email) {
+// HTTP-01 challenge verification
+async function performHttpChallenge(client, domain, order) {
+  // Get authorizations and select HTTP challenge
+  const authorizations = await client.getAuthorizations(order);
+  const httpChallenge = authorizations[0].challenges.find(
+    challenge => challenge.type === 'http-01'
+  );
+  
+  if (!httpChallenge) {
+    throw new Error(`No HTTP-01 challenge found for domain ${domain}`);
+  }
+  
+  // Prepare key authorization for the HTTP challenge
+  const keyAuthorization = await client.getChallengeKeyAuthorization(httpChallenge);
+  
+  // Store the challenge response for the HTTP challenge verification route
+  challengeResponses.set(httpChallenge.token, keyAuthorization);
+  
+  // Let the CA know we're ready for the challenge
+  await client.completeChallenge(httpChallenge);
+  
+  // Wait for the CA to validate the challenge
+  await client.waitForValidStatus(httpChallenge);
+  
+  // Clean up challenge response
+  challengeResponses.delete(httpChallenge.token);
+}
+
+// DNS-01 challenge preparation - returns values needed for DNS record
+async function prepareDnsChallenge(client, domain, order) {
+  // Get authorizations and select DNS challenge
+  const authorizations = await client.getAuthorizations(order);
+  const dnsChallenge = authorizations[0].challenges.find(
+    challenge => challenge.type === 'dns-01'
+  );
+  
+  if (!dnsChallenge) {
+    throw new Error(`No DNS-01 challenge found for domain ${domain}`);
+  }
+  
+  // Get the key authorization and DNS record value
+  const keyAuthorization = await client.getChallengeKeyAuthorization(dnsChallenge);
+  const dnsRecordValue = acme.crypto.createDnsRecordText(keyAuthorization);
+  
+  // Store the challenge information
+  const challengeInfo = {
+    token: dnsChallenge.token,
+    keyAuthorization,
+    dnsRecordValue,
+    challenge: dnsChallenge
+  };
+  
+  dnsChallengeValues.set(domain, challengeInfo);
+  
+  return {
+    recordName: `_acme-challenge.${domain}`,
+    recordValue: dnsRecordValue
+  };
+}
+
+// Complete DNS challenge after DNS record has been set
+async function completeDnsChallenge(client, domain) {
+  const challengeInfo = dnsChallengeValues.get(domain);
+  
+  if (!challengeInfo) {
+    throw new Error(`No pending DNS challenge found for domain ${domain}`);
+  }
+  
+  try {
+    // Notify Let's Encrypt that we're ready to complete the challenge
+    await client.completeChallenge(challengeInfo.challenge);
+    
+    // Wait for the CA to validate the challenge
+    await client.waitForValidStatus(challengeInfo.challenge);
+    
+    // Clean up
+    dnsChallengeValues.delete(domain);
+    
+    return true;
+  } catch (error) {
+    console.error('DNS challenge verification failed:', error);
+    throw error;
+  }
+}
+
+// Generate certificate using HTTP-01 challenge
+async function generateCertificateHttp(domain, email) {
   try {
     // Get client with registered account
     const client = await getClient(email);
@@ -92,30 +179,12 @@ async function generateCertificate(domain, email) {
       identifiers: [{ type: 'dns', value: domain }]
     });
     
-    // Get authorizations and select HTTP challenge
-    const authorizations = await client.getAuthorizations(order);
-    const httpChallenge = authorizations[0].challenges.find(
-      challenge => challenge.type === 'http-01'
-    );
-    
-    // Prepare key authorization for the HTTP challenge
-    const keyAuthorization = await client.getChallengeKeyAuthorization(httpChallenge);
-    
-    // Store the challenge response for the HTTP challenge verification route
-    challengeResponses.set(httpChallenge.token, keyAuthorization);
-    
-    // Let the CA know we're ready for the challenge
-    await client.completeChallenge(httpChallenge);
-    
-    // Wait for the CA to validate the challenge
-    await client.waitForValidStatus(httpChallenge);
+    // Perform HTTP-01 challenge
+    await performHttpChallenge(client, domain, order);
     
     // Finalize the order and get the certificate
     await client.finalizeOrder(order, csrPem);
     const certificate = await client.getCertificate(order);
-    
-    // Clean up challenge response
-    challengeResponses.delete(httpChallenge.token);
     
     // Save the certificate and private key to files
     const domainSafe = domain.replace(/\*/g, 'wildcard').replace(/[^a-z0-9]/gi, '_');
@@ -133,9 +202,82 @@ async function generateCertificate(domain, email) {
       privateKey: privateKeyPem
     };
   } catch (error) {
-    console.error('Error generating certificate:', error);
+    console.error('Error generating certificate with HTTP challenge:', error);
     throw error;
   }
+}
+
+// Prepare DNS challenge - returns data for DNS record
+async function prepareDnsChallengeForDomain(domain, email) {
+  try {
+    // Get client with registered account
+    const client = await getClient(email);
+    const { csrPem, privateKeyPem } = generateCsr(domain);
+    
+    // Create a certificate order
+    const order = await client.createOrder({
+      identifiers: [{ type: 'dns', value: domain }]
+    });
+    
+    // Store CSR and key for later use
+    dnsChallengeValues.set(`${domain}_csr`, { csrPem, privateKeyPem, order });
+    
+    // Prepare DNS challenge
+    return await prepareDnsChallenge(client, domain, order);
+  } catch (error) {
+    console.error('Error preparing DNS challenge:', error);
+    throw error;
+  }
+}
+
+// Complete DNS challenge and get certificate
+async function completeDnsChallengeAndGetCertificate(domain, email) {
+  try {
+    // Get client with registered account
+    const client = await getClient(email);
+    
+    // Get stored CSR and order
+    const csrData = dnsChallengeValues.get(`${domain}_csr`);
+    if (!csrData) {
+      throw new Error(`No pending certificate request found for domain ${domain}`);
+    }
+    
+    const { csrPem, privateKeyPem, order } = csrData;
+    
+    // Complete DNS challenge
+    await completeDnsChallenge(client, domain);
+    
+    // Finalize the order and get the certificate
+    await client.finalizeOrder(order, csrPem);
+    const certificate = await client.getCertificate(order);
+    
+    // Save the certificate and private key to files
+    const domainSafe = domain.replace(/\*/g, 'wildcard').replace(/[^a-z0-9]/gi, '_');
+    const timestamp = Date.now();
+    const certPath = path.join(CERT_DIR, `${domainSafe}_${timestamp}.cert.pem`);
+    const keyPath = path.join(CERT_DIR, `${domainSafe}_${timestamp}.key.pem`);
+    
+    fs.writeFileSync(certPath, certificate);
+    fs.writeFileSync(keyPath, privateKeyPem);
+    
+    // Clean up
+    dnsChallengeValues.delete(`${domain}_csr`);
+    
+    return {
+      certificatePath: certPath,
+      privateKeyPath: keyPath,
+      certificate,
+      privateKey: privateKeyPem
+    };
+  } catch (error) {
+    console.error('Error completing DNS challenge:', error);
+    throw error;
+  }
+}
+
+// Legacy function for backward compatibility
+async function generateCertificate(domain, email) {
+  return await generateCertificateHttp(domain, email);
 }
 
 function getChallengeResponse(token) {
@@ -144,5 +286,8 @@ function getChallengeResponse(token) {
 
 module.exports = {
   generateCertificate,
+  generateCertificateHttp,
+  prepareDnsChallengeForDomain,
+  completeDnsChallengeAndGetCertificate,
   getChallengeResponse
 }; 

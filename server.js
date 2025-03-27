@@ -10,8 +10,15 @@ const fileStore = require('session-file-store')(session);
 // Load environment variables
 dotenv.config();
 
+// Check for required environment variables
+if (!process.env.SESSION_SECRET) {
+  console.error('ERROR: SESSION_SECRET environment variable is required');
+  process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProduction = process.env.NODE_ENV === 'production';
 
 // Middleware
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -21,10 +28,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Session setup
 app.use(session({
   store: new fileStore(),
-  secret: process.env.SESSION_SECRET || 'letsencrypt-secret',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 } // 1 week
+  cookie: { 
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week
+    secure: isProduction,
+    httpOnly: true,
+    sameSite: 'lax'
+  }
 }));
 
 // View engine
@@ -58,5 +70,5 @@ app.use('/certificates', requireAuth, certificateRoutes);
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on ${isProduction ? 'https' : 'http'}://${process.env.DOMAIN || 'localhost'}:${PORT}`);
 }); 

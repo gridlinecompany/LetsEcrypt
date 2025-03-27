@@ -81,7 +81,7 @@ router.post('/generate', async (req, res) => {
     // For HTTP-01 challenge
     if (verificationMethod === 'http') {
       // Generate certificate
-      const result = await acmeClient.generateCertificate(domain, email);
+      const result = await acmeClient.generateCertificateHttp(domain, email);
       
       // Save certificate info
       const certificates = getCertificates();
@@ -105,18 +105,15 @@ router.post('/generate', async (req, res) => {
         user: req.session.user
       });
     } 
-    // For DNS-01 challenge (to be implemented)
+    // For DNS-01 challenge
     else if (verificationMethod === 'dns') {
-      // In a real implementation, we would:
-      // 1. Start the ACME DNS challenge process
-      // 2. Get the actual challenge token from Let's Encrypt
-      // For this demo, we're using a placeholder
+      // Start the ACME DNS challenge process
+      const dnsChallenge = await acmeClient.prepareDnsChallengeForDomain(domain, email);
       
       // Store domain info in session for the verification step
       req.session.pendingDnsVerification = {
         domain,
         email,
-        challengeValue: 'PLACEHOLDER_VALUE', // In real app, this would be the actual challenge
         timestamp: Date.now()
       };
       
@@ -125,8 +122,8 @@ router.post('/generate', async (req, res) => {
         user: req.session.user,
         dnsRecord: {
           type: 'TXT',
-          name: `_acme-challenge.${domain}`,
-          value: 'PLACEHOLDER_VALUE' // This would come from actual ACME challenge
+          name: dnsChallenge.recordName,
+          value: dnsChallenge.recordValue
         }
       });
     }
@@ -164,42 +161,13 @@ router.post('/verify-dns', async (req, res) => {
       });
     }
 
-    // In a real implementation, we would:
-    // 1. Check if the DNS record is correctly set
-    // 2. Complete the ACME challenge
-    // 3. Get the actual certificate
-    
-    // For demo purposes, let's simulate checking the DNS record
     let dnsVerified = false;
     try {
-      // Try to resolve the TXT record
-      const recordName = `_acme-challenge.${domain}`;
-      const records = await dns.resolveTxt(recordName);
-      
-      // Check if any of the records match our expected value
-      dnsVerified = records.some(record => 
-        record.includes(pendingVerification.challengeValue)
+      // Complete the DNS challenge and get the certificate
+      const result = await acmeClient.completeDnsChallengeAndGetCertificate(
+        domain, 
+        pendingVerification.email
       );
-    } catch (error) {
-      // DNS record not found or other DNS error
-      dnsVerified = false;
-    }
-    
-    if (dnsVerified) {
-      // Simulate successful certificate generation
-      const certificateResult = {
-        certificate: '-----BEGIN CERTIFICATE-----\nMIIFLTCCBBWgAwIBAgISA+sgp+EeUCovR/rRj4pWEi/dMA0GCSqGSIb3DQEBCwUA\n... (simulated certificate) ...\n-----END CERTIFICATE-----',
-        privateKey: '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDGuXlYnkm+...\n... (simulated key) ...\n-----END PRIVATE KEY-----'
-      };
-      
-      // Save certificate files (in a real app)
-      const timestamp = Date.now();
-      const domainSafe = domain.replace(/\*/g, 'wildcard').replace(/[^a-z0-9]/gi, '_');
-      const certPath = path.join(path.dirname(CERTIFICATES_FILE), `${domainSafe}_${timestamp}.cert.pem`);
-      const keyPath = path.join(path.dirname(CERTIFICATES_FILE), `${domainSafe}_${timestamp}.key.pem`);
-      
-      fs.writeFileSync(certPath, certificateResult.certificate);
-      fs.writeFileSync(keyPath, certificateResult.privateKey);
       
       // Save certificate info
       const certificates = getCertificates();
@@ -209,8 +177,8 @@ router.post('/verify-dns', async (req, res) => {
         domain,
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
-        certificatePath: certPath,
-        privateKeyPath: keyPath,
+        certificatePath: result.certificatePath,
+        privateKeyPath: result.privateKeyPath,
         verificationMethod: 'dns'
       };
       
@@ -223,20 +191,22 @@ router.post('/verify-dns', async (req, res) => {
       // Render success page
       res.render('certificate-result', { 
         success: true,
-        certificateData: {
-          certificate: certificateResult.certificate,
-          privateKey: certificateResult.privateKey
-        },
+        certificateData: result,
         domain,
         user: req.session.user
       });
-    } else {
-      // DNS verification failed
-      res.render('error', {
-        message: 'DNS verification failed. Please make sure you added the TXT record correctly and try again.',
-        user: req.session.user
-      });
+      
+      return;
+    } catch (error) {
+      console.error('DNS verification error:', error);
+      // If the DNS challenge fails, we'll render an error page below
     }
+    
+    // If we're here, the verification failed
+    res.render('error', {
+      message: 'DNS verification failed. Please make sure you added the TXT record correctly and try again. DNS changes may take up to 24 hours to propagate.',
+      user: req.session.user
+    });
   } catch (error) {
     console.error('DNS verification error:', error);
     res.render('error', {
