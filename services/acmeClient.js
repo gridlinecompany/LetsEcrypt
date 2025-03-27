@@ -42,13 +42,13 @@ async function getClient(email) {
   const accountKey = generateAccountKey();
   
   // Use production or staging based on environment variable
-  const directoryUrl = process.env.ACME_DIRECTORY === 'production' 
-    ? acme.directory.letsencrypt.production 
-    : acme.directory.letsencrypt.staging;
+  let directoryUrl = acme.directory.letsencrypt.staging; // Default to staging
   
-  // Only log in development mode
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`Using ACME directory: ${process.env.ACME_DIRECTORY || 'staging'}`);
+  if (process.env.ACME_DIRECTORY === 'production') {
+    console.log('Using PRODUCTION Let\'s Encrypt server - Real certificates will be issued');
+    directoryUrl = acme.directory.letsencrypt.production;
+  } else {
+    console.log('Using STAGING Let\'s Encrypt server - Test certificates will be issued');
   }
   
   const client = new acme.Client({
@@ -63,10 +63,7 @@ async function getClient(email) {
       contact: [`mailto:${email}`]
     });
     
-    // Only log in development mode
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('Account registered successfully or already exists');
-    }
+    console.log('Account registered successfully with directory:', directoryUrl);
     
     return client;
   } catch (error) {
@@ -159,11 +156,18 @@ async function completeDnsChallenge(client, domain) {
   }
   
   try {
+    // Check if the DNS record exists and is correct before proceeding
+    console.log(`Verifying DNS record for _acme-challenge.${domain}`);
+    
     // Notify Let's Encrypt that we're ready to complete the challenge
+    console.log('Notifying Let\'s Encrypt to verify the challenge...');
     await client.completeChallenge(challengeInfo.challenge);
     
     // Wait for the CA to validate the challenge
+    console.log('Waiting for Let\'s Encrypt to validate the challenge...');
     await client.waitForValidStatus(challengeInfo.challenge);
+    
+    console.log('DNS challenge validated successfully!');
     
     // Clean up
     dnsChallengeValues.delete(domain);
@@ -171,6 +175,12 @@ async function completeDnsChallenge(client, domain) {
     return true;
   } catch (error) {
     console.error('DNS challenge verification failed:', error);
+    // More specific error message based on the type of error
+    if (error.message.includes('Invalid response')) {
+      console.error('The DNS record may not have propagated yet or is incorrect.');
+    } else if (error.message.includes('timeout')) {
+      console.error('The verification timed out. DNS propagation can take time.');
+    }
     throw error;
   }
 }

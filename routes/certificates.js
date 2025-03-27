@@ -142,10 +142,13 @@ router.post('/generate', async (req, res) => {
 router.post('/verify-dns', async (req, res) => {
   try {
     const { domain } = req.body;
+    console.log(`Starting DNS verification for domain: ${domain}`);
+    
     const pendingVerification = req.session.pendingDnsVerification;
     
     // Validation
     if (!pendingVerification || pendingVerification.domain !== domain) {
+      console.error('Invalid verification request, no matching pending verification found');
       return res.status(400).render('error', {
         message: 'Invalid verification request. Please start the certificate request process again.',
         user: req.session.user
@@ -155,20 +158,22 @@ router.post('/verify-dns', async (req, res) => {
     // Check if verification expired (30 minutes)
     const verificationAge = Date.now() - pendingVerification.timestamp;
     if (verificationAge > 30 * 60 * 1000) {
+      console.error('Verification expired:', verificationAge, 'ms old');
       return res.status(400).render('error', {
         message: 'Verification request expired. Please start the certificate request process again.',
         user: req.session.user
       });
     }
 
-    let dnsVerified = false;
     try {
+      console.log('Calling completeDnsChallengeAndGetCertificate...');
       // Complete the DNS challenge and get the certificate
       const result = await acmeClient.completeDnsChallengeAndGetCertificate(
         domain, 
         pendingVerification.email
       );
       
+      console.log('DNS verification successful, saving certificate info');
       // Save certificate info
       const certificates = getCertificates();
       const newCert = {
@@ -188,6 +193,16 @@ router.post('/verify-dns', async (req, res) => {
       // Clear pending verification from session
       delete req.session.pendingDnsVerification;
       
+      // Log certificate details for debugging (only in development)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Certificate details:', {
+          id: newCert.id,
+          domain: newCert.domain,
+          createdAt: newCert.createdAt,
+          expiresAt: newCert.expiresAt
+        });
+      }
+      
       // Render success page
       res.render('certificate-result', { 
         success: true,
@@ -199,14 +214,25 @@ router.post('/verify-dns', async (req, res) => {
       return;
     } catch (error) {
       console.error('DNS verification error:', error);
-      // If the DNS challenge fails, we'll render an error page below
+      // More detailed error message based on the type of error
+      let errorMessage = 'DNS verification failed. Please make sure you added the TXT record correctly and try again.';
+      
+      if (error.message.includes('Invalid response')) {
+        errorMessage = 'DNS verification failed: The DNS record could not be found or is incorrect. Please verify you added the TXT record exactly as shown.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'DNS verification timed out. DNS changes can take up to 24 hours to propagate. Please wait and try again later.';
+      } else if (error.message.includes('No pending DNS challenge')) {
+        errorMessage = 'No pending DNS challenge found. Please start the certificate request process again.';
+      } else if (error.message.includes('permission denied')) {
+        errorMessage = 'Server file permission error. Please contact the administrator.';
+      }
+      
+      // If the DNS challenge fails, render an error page
+      return res.render('error', {
+        message: errorMessage,
+        user: req.session.user
+      });
     }
-    
-    // If we're here, the verification failed
-    res.render('error', {
-      message: 'DNS verification failed. Please make sure you added the TXT record correctly and try again. DNS changes may take up to 24 hours to propagate.',
-      user: req.session.user
-    });
   } catch (error) {
     console.error('DNS verification error:', error);
     res.render('error', {
