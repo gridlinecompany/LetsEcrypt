@@ -567,6 +567,44 @@ async function generateCertificateWithVerifiedDns(domain, email) {
     
     try {
       await client.finalizeOrder(order, csrPem);
+      
+      // Wait for the order to transition to the 'valid' state
+      console.log('Waiting for order to become valid...');
+      
+      // Poll for order status until it's valid or times out
+      const maxAttempts = 10;
+      let attempts = 0;
+      let orderStatus;
+      
+      while (attempts < maxAttempts) {
+        attempts++;
+        console.log(`Checking order status, attempt ${attempts}/${maxAttempts}`);
+        
+        try {
+          const updatedOrder = await client.getOrder(order);
+          orderStatus = updatedOrder.status;
+          console.log(`Order status: ${orderStatus}`);
+          
+          if (orderStatus === 'valid') {
+            console.log('Order is now valid and ready for certificate download!');
+            break;
+          }
+          
+          if (attempts < maxAttempts) {
+            console.log(`Order not valid yet (${orderStatus}). Waiting 15 seconds...`);
+            await new Promise(resolve => setTimeout(resolve, 15000));
+          }
+        } catch (orderCheckError) {
+          console.error('Error checking order status:', orderCheckError.message);
+          if (attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+        }
+      }
+      
+      if (orderStatus !== 'valid') {
+        throw new Error(`Order did not become valid after ${maxAttempts} attempts. Current status: ${orderStatus}`);
+      }
     } catch (finalizeError) {
       if (finalizeError.message.includes('Order\'s status')) {
         console.log('Order status not ready for finalization. Waiting 30 seconds...');
@@ -584,13 +622,13 @@ async function generateCertificateWithVerifiedDns(domain, email) {
     }
     
     // Wait for the order to be finalized by Let's Encrypt
-    console.log('Order finalized, waiting 15 seconds for certificate to be issued...');
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    console.log('Order finalized, waiting 20 seconds for certificate to be issued...');
+    await new Promise(resolve => setTimeout(resolve, 20000));
     
     // Get the certificate with retries
     console.log('Downloading certificate...');
     let certificate;
-    const maxRetries = 5;
+    const maxRetries = 8;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -598,26 +636,86 @@ async function generateCertificateWithVerifiedDns(domain, email) {
         const finalOrder = await client.getOrder(order);
         console.log(`Certificate download attempt ${attempt}/${maxRetries}, Order status: ${finalOrder.status}`);
         
-        // Download the certificate
-        certificate = await client.getCertificate(order);
-        console.log('Certificate downloaded successfully!');
-        break;
+        // Check if the order is valid
+        if (finalOrder.status !== 'valid') {
+          console.log(`Order not valid yet (${finalOrder.status}). Waiting before retry...`);
+          await new Promise(resolve => setTimeout(resolve, 15000));
+          continue;
+        }
+        
+        // If we reach this point, the order is valid, so we can download the certificate
+        try {
+          // Download the certificate
+          certificate = await client.getCertificate(order);
+          console.log('Certificate downloaded successfully!');
+          break;
+        } catch (downloadError) {
+          if (downloadError.message.includes('URL not found') && attempt < maxRetries) {
+            const waitTime = attempt * 15000; // Increase wait time with each attempt (15s, 30s, 45s...)
+            console.log(`Certificate URL not available yet. Waiting ${waitTime/1000} seconds before retry...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+          } else {
+            throw downloadError;
+          }
+        }
       } catch (certError) {
-        if (certError.message.includes('URL not found') && attempt < maxRetries) {
-          const waitTime = attempt * 10000; // Increase wait time with each attempt
-          console.log(`Certificate URL not available yet. Waiting ${waitTime/1000} seconds before retry...`);
+        console.log(`Error during certificate download attempt ${attempt}: ${certError.message}`);
+        
+        if (attempt < maxRetries) {
+          const waitTime = attempt * 10000;
+          console.log(`Will retry in ${waitTime/1000} seconds...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
-        } else if (attempt >= maxRetries) {
-          console.log(`Failed to download certificate after ${maxRetries} attempts.`);
-          throw certError;
         } else {
+          console.log(`Failed to download certificate after ${maxRetries} attempts.`);
           throw certError;
         }
       }
     }
     
+    // Fallback for URL not found error: Generate a self-signed certificate
     if (!certificate) {
-      throw new Error('Failed to download certificate after multiple attempts');
+      console.log('Could not download certificate from Let\'s Encrypt. Generating a temporary self-signed certificate.');
+      
+      // This is for development/testing only
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Creating self-signed certificate for development use only');
+        
+        // Generate a simple self-signed certificate using forge
+        const forge = require('node-forge');
+        const pki = forge.pki;
+        
+        // Generate a key pair
+        const keys = pki.rsa.generateKeyPair(2048);
+        const cert = pki.createCertificate();
+        
+        // Set certificate attributes
+        cert.publicKey = keys.publicKey;
+        cert.serialNumber = '01';
+        cert.validity.notBefore = new Date();
+        cert.validity.notAfter = new Date();
+        cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 1);
+        
+        // Set subject and issuer fields
+        const attrs = [
+          { name: 'commonName', value: domain },
+          { name: 'organizationName', value: 'Self-Signed Certificate' },
+          { name: 'organizationalUnitName', value: 'Development' }
+        ];
+        cert.setSubject(attrs);
+        cert.setIssuer(attrs);
+        
+        // Sign the certificate with the private key
+        cert.sign(keys.privateKey, forge.md.sha256.create());
+        
+        // Convert to PEM format
+        certificate = pki.certificateToPem(cert);
+        privateKeyPem = pki.privateKeyToPem(keys.privateKey);
+        
+        console.log('Self-signed certificate generated for development use.');
+      } else {
+        // In production, we don't want to use self-signed certificates
+        throw new Error('Failed to download certificate from Let\'s Encrypt after multiple attempts.');
+      }
     }
     
     // Save the certificate and private key to files
