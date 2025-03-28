@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', function() {
       
       try {
         // Make API request to start certificate request
-        const response = await fetch(`${API_URL}/certificates/request`, {
+        const response = await fetch(`/certificates/request`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -59,6 +59,11 @@ document.addEventListener('DOMContentLoaded', function() {
           }),
           credentials: 'include'
         });
+        
+        // Check if response is OK before trying to parse JSON
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
         
         const data = await response.json();
         
@@ -82,7 +87,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       } catch (error) {
         console.error('Error requesting certificate:', error);
-        updateStatus(`Error: ${error.message}. Please try again.`, 'error');
+        updateStatus(`Error: ${error.message}. Please try again or check your server connection.`, 'error');
         
         // Re-enable form submission button
         if (submitBtn) {
@@ -164,7 +169,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     try {
       // First, verify the DNS record
-      const checkResponse = await fetch(`${API_URL}/certificates/check-dns`, {
+      const checkResponse = await fetch(`/certificates/check-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -178,9 +183,14 @@ document.addEventListener('DOMContentLoaded', function() {
         credentials: 'include'
       });
       
+      // Check if response is OK before trying to parse JSON
+      if (!checkResponse.ok) {
+        throw new Error(`Server returned ${checkResponse.status}: ${checkResponse.statusText}`);
+      }
+      
       const checkData = await checkResponse.json();
       
-      if (!checkResponse.ok || !checkData.success) {
+      if (!checkData.success) {
         // If DNS verification failed, show error and re-enable button
         updateStatus(`DNS verification failed: ${checkData.message || 'Please check your DNS settings'}`, 'error');
         if (checkData.details) {
@@ -206,7 +216,7 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Step 2/3: DNS verified successfully! Generating certificate...', 'success');
       
       // Now, generate the certificate
-      const certResponse = await fetch(`${API_URL}/certificates/verify-dns`, {
+      const certResponse = await fetch(`/certificates/verify-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -219,9 +229,14 @@ document.addEventListener('DOMContentLoaded', function() {
         credentials: 'include'
       });
       
+      // Check if response is OK before trying to parse JSON
+      if (!certResponse.ok) {
+        throw new Error(`Server returned ${certResponse.status}: ${certResponse.statusText}`);
+      }
+      
       const certData = await certResponse.json();
       
-      if (certResponse.ok) {
+      if (certData.success) {
         updateStatus('Step 3/3: Certificate generation started. Please wait...', 'info');
         
         // Clean up any existing polling and start new polling
@@ -237,7 +252,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     } catch (error) {
       console.error('Error during verification process:', error);
-      updateStatus(`Error: ${error.message}. Please try again.`, 'error');
+      updateStatus(`Error: ${error.message}. Please try again or check your server connection.`, 'error');
       if (verifyBtn) {
         verifyBtn.disabled = false;
         verifyBtn.innerHTML = 'Try Again';
@@ -258,10 +273,16 @@ document.addEventListener('DOMContentLoaded', function() {
       pollCount++;
       
       try {
-        const response = await fetch(`${API_URL}/certificates/status`, {
+        const response = await fetch(`/certificates/status`, {
           credentials: 'include', // Use include for cross-domain
           cache: 'no-store' // Prevent caching
         });
+        
+        // Check if response is OK before trying to parse JSON
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
+        
         const data = await response.json();
         
         // Log status data for debugging
