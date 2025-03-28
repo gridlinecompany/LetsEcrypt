@@ -1,200 +1,141 @@
 // Certificate request handling
 document.addEventListener('DOMContentLoaded', function() {
-  // Use fixed API URL instead of dynamic window.location.origin
-  const API_URL = 'https://freesslcerts.com';
-  
-  const certForm = document.getElementById('certificate-form');
-  const dnsVerifyForm = document.getElementById('dns-verify-form');
+  const API_URL = '';
   const statusContainer = document.getElementById('status-container');
+  let statusPollInterval;
   
+  // Show status container and update status
+  function updateStatus(message, type = 'info') {
+    if (!statusContainer) return;
+    
+    statusContainer.classList.remove('d-none');
+    
+    // Map type to Bootstrap alert class
+    const alertClass = {
+      'info': 'alert-info',
+      'success': 'alert-success',
+      'error': 'alert-danger',
+      'warning': 'alert-warning'
+    }[type] || 'alert-info';
+    
+    statusContainer.innerHTML = `
+      <div class="alert ${alertClass}">
+        ${message}
+      </div>
+    `;
+  }
+
+  // Form submission
+  const certForm = document.getElementById('cert-request-form');
   if (certForm) {
     certForm.addEventListener('submit', async function(e) {
       e.preventDefault();
       
-      const domain = document.getElementById('domain').value;
-      const email = document.getElementById('email').value;
+      const domain = document.getElementById('domain').value.trim();
+      const email = document.getElementById('email').value.trim();
       const challengeType = document.querySelector('input[name="challengeType"]:checked').value;
       
-      // Show loading status
-      updateStatus('Submitting certificate request...', 'info');
+      // Disable form submission button
+      const submitBtn = document.getElementById('request-cert-btn');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+      }
+      
+      // Clear any previous status
+      updateStatus('Preparing certificate request...', 'info');
       
       try {
-        const response = await fetch(`${API_URL}/certificates/generate`, {
+        // Make API request to start certificate request
+        const response = await fetch(`${API_URL}/certificates/request`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ domain, email, challengeType }),
-          credentials: 'include' // Use include for cross-domain
+          body: JSON.stringify({
+            domain,
+            email,
+            challengeType
+          }),
+          credentials: 'include'
         });
         
         const data = await response.json();
         
+        // Re-enable form submission button
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = 'Request Certificate';
+        }
+        
         if (response.ok) {
           if (challengeType === 'dns') {
-            // For DNS challenge, show DNS instructions
-            updateStatus('DNS challenge prepared successfully. Please add the following TXT record:', 'success');
-            
-            // Show DNS record information
-            const dnsInfoHtml = `
-              <div class="card mt-4 mb-4">
-                <div class="card-header bg-light">
-                  <h3 class="h5 mb-0">DNS Record Information</h3>
-                </div>
-                <div class="card-body">
-                  <p><strong>Record Type:</strong> TXT</p>
-                  <p><strong>Record Name:</strong> <code>${data.dnsData.recordName}</code></p>
-                  <p><strong>Record Value:</strong> <code>${data.dnsData.recordValue}</code></p>
-                  <hr>
-                  <div class="mt-3">
-                    <p class="mb-3">After adding this record, please allow time for DNS propagation (can take 5 minutes to several hours).</p>
-                    <div class="d-grid gap-2 d-md-flex">
-                      <button id="check-dns-btn" class="btn btn-secondary">
-                        Check DNS Propagation
-                      </button>
-                      <button id="verify-dns-btn" class="btn btn-primary" disabled>
-                        Generate Certificate
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            `;
-            statusContainer.innerHTML += dnsInfoHtml;
-            
-            // Add event listener for check button
-            document.getElementById('check-dns-btn').addEventListener('click', async function() {
-              checkDnsPropagation(domain);
-            });
-            
-            // Add event listener for verify button
-            document.getElementById('verify-dns-btn').addEventListener('click', async function() {
-              verifyDnsAndGetCertificate(domain);
-            });
+            displayDnsRecordInfo(data.dnsData);
           } else {
             // For HTTP challenge, start polling for certificate status
-            updateStatus('Certificate generation started. This may take a few minutes...', 'info');
-            
-            // Clean up any existing polling first
+            updateStatus('HTTP challenge initialized. Attempting verification...', 'info');
             cleanupExistingPolling();
-            
-            // Start polling for status updates
             startStatusPolling();
           }
         } else {
-          updateStatus(`Error: ${data.error} - ${data.message}`, 'error');
+          updateStatus(`Error: ${data.message}`, 'error');
         }
       } catch (error) {
-        updateStatus(`Error: ${error.message}`, 'error');
+        console.error('Error requesting certificate:', error);
+        updateStatus(`Error: ${error.message}. Please try again.`, 'error');
+        
+        // Re-enable form submission button
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = 'Request Certificate';
+        }
       }
     });
   }
   
-  // Function to check DNS propagation
-  async function checkDnsPropagation(domain) {
-    // Clear any previous check results first
-    const previousResults = document.querySelectorAll('.dns-check-result');
-    previousResults.forEach(el => el.remove());
+  // Function to display DNS record information
+  function displayDnsRecordInfo(data) {
+    const dnsInfoContainer = document.getElementById('dns-info');
+    if (!dnsInfoContainer) return;
+
+    // Access the correct properties based on server response structure
+    const domain = data.domain;
+    const recordName = data.recordName;
+    const recordValue = data.recordValue;
     
-    // Update status with timestamp to show it's a new check
-    const timestamp = new Date().toLocaleTimeString();
-    updateStatus(`[${timestamp}] Checking DNS propagation...`, 'info');
+    // Make the container visible
+    dnsInfoContainer.classList.remove('d-none');
     
-    try {
-      // Disable the button during checking and show spinner
-      const checkBtn = document.getElementById('check-dns-btn');
-      if (checkBtn) {
-        checkBtn.disabled = true;
-        const originalText = checkBtn.innerHTML;
-        checkBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking...';
-      }
-      
-      // Get the recordValue directly from the DOM to avoid session dependency
-      const recordValueElement = document.querySelector('.card-body code:nth-of-type(2)');
-      const recordValue = recordValueElement ? recordValueElement.textContent.trim() : '';
-      
-      const response = await fetch(`${API_URL}/certificates/check-dns`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache'
-        },
-        body: JSON.stringify({ 
-          domain,
-          recordValue, // Send the record value in the request
-          _t: Date.now() // Add timestamp to prevent caching
-        }),
-        credentials: 'include' // Use include for cross-domain requests
-      });
-      
-      // Re-enable the button and restore text
-      if (checkBtn) {
-        checkBtn.disabled = false;
-        checkBtn.innerHTML = 'Check DNS Propagation';
-      }
-      
-      let data;
-      try {
-        data = await response.json();
-      } catch (jsonError) {
-        console.error('Error parsing JSON response:', jsonError);
-        updateStatus(`[${timestamp}] Error parsing server response. Please try again.`, 'error');
-        return;
-      }
-      
-      if (response.ok && data.success) {
-        // Create result with timestamp
-        const resultHtml = `
-          <div class="alert alert-success mb-3 dns-check-result">
-            <strong>[${timestamp}] DNS check successful!</strong> 
-            <p>DNS record has been properly set and verified.</p>
+    // Display the DNS record information in a card
+    dnsInfoContainer.innerHTML = `
+      <div class="card mt-4">
+        <div class="card-header bg-primary text-white">
+          <h5 class="mb-0">DNS Challenge Details</h5>
+        </div>
+        <div class="card-body">
+          <p>Add this TXT record to your domain's DNS settings:</p>
+          <p><strong>Record Type:</strong> <code>TXT</code></p>
+          <p><strong>Record Name:</strong> <code>${recordName}</code></p>
+          <p><strong>Record Value:</strong> <code>${recordValue}</code></p>
+          <div class="alert alert-info">
+            <i class="fas fa-info-circle"></i> DNS propagation can take 5-30 minutes. After adding the record, click the button below.
           </div>
-        `;
-        statusContainer.innerHTML = resultHtml + statusContainer.innerHTML;
-        
-        // Enable the certificate generation button
-        document.getElementById('verify-dns-btn').disabled = false;
-      } else {
-        // Handle session issues
-        if (data.message && data.message.includes('No pending DNS certificate request')) {
-          updateStatus(`[${timestamp}] Session expired or not found. Please refresh the page and try again.`, 'error');
-          
-          // Show refresh button
-          const refreshBtn = document.createElement('button');
-          refreshBtn.className = 'btn btn-warning mt-3';
-          refreshBtn.textContent = 'Refresh Page';
-          refreshBtn.onclick = () => window.location.reload();
-          statusContainer.prepend(refreshBtn);
-          
-          return;
-        }
-        
-        updateStatus(`[${timestamp}] DNS check failed: ${data.message}`, 'error');
-        // Show detailed information if available
-        if (data.details) {
-          const detailsHtml = `
-            <div class="alert alert-warning mt-3 dns-check-result">
-              <h6>DNS Check Details:</h6>
-              <ul>
-                ${data.details.map(detail => `<li>${detail}</li>`).join('')}
-              </ul>
-            </div>
-          `;
-          statusContainer.innerHTML = detailsHtml + statusContainer.innerHTML;
-        }
-      }
-    } catch (error) {
-      console.error('Network error during DNS check:', error);
-      updateStatus(`[${timestamp}] Error checking DNS: ${error.message}. Please try again.`, 'error');
-      
-      // Re-enable the button in case of error
-      const checkBtn = document.getElementById('check-dns-btn');
-      if (checkBtn) {
-        checkBtn.disabled = false;
-        checkBtn.innerHTML = 'Check DNS Propagation';
-      }
-    }
+          <button id="verify-dns-btn" class="btn btn-success mt-2">
+            Verify and Generate Certificate
+          </button>
+        </div>
+      </div>
+    `;
+    
+    // Add event listener to the verify DNS button
+    document.getElementById('verify-dns-btn').addEventListener('click', function() {
+      verifyCertificateProcess(domain);
+    });
+    
+    // Show status container with initial message
+    const statusContainer = document.getElementById('status-container');
+    statusContainer.classList.remove('d-none');
+    updateStatus('Please add the DNS record shown above to your domain, then click "Verify and Generate Certificate"', 'info');
   }
   
   // Function to clean up any existing polling
@@ -206,71 +147,101 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
   
-  // Function to verify DNS and complete certificate generation
-  async function verifyDnsAndGetCertificate(domain) {
-    updateStatus('Generating certificate using verified DNS challenge...', 'info');
+  // Combined function for DNS verification and certificate generation
+  async function verifyCertificateProcess(domain) {
+    // Get the button and disable it to prevent multiple clicks
+    const verifyBtn = document.getElementById('verify-dns-btn');
+    if (verifyBtn) {
+      verifyBtn.disabled = true;
+      verifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Verifying DNS and Generating Certificate...';
+    }
     
-    // Disable the button to prevent multiple submissions
-    document.getElementById('verify-dns-btn').disabled = true;
+    // Get the recordValue directly from the DOM
+    const recordValueElement = document.querySelector('.card-body code:nth-of-type(2)');
+    const recordValue = recordValueElement ? recordValueElement.textContent.trim() : '';
+    
+    updateStatus('Step 1/3: Verifying DNS record... (This may take a few moments)', 'info');
     
     try {
-      // Add flag to indicate we want to use the verified challenge (not create a new one)
-      const response = await fetch(`${API_URL}/certificates/verify-dns`, {
+      // First, verify the DNS record
+      const checkResponse = await fetch(`${API_URL}/certificates/check-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache'
+          'Cache-Control': 'no-cache, no-store'
         },
         body: JSON.stringify({ 
           domain,
-          useVerifiedChallenge: true  // Flag to reuse the verified challenge
+          recordValue,
+          _t: Date.now()
         }),
-        credentials: 'include' // Use include for cross-domain
+        credentials: 'include'
       });
       
-      let data;
-      try {
-        data = await response.json();
-      } catch (jsonError) {
-        console.error('Error parsing JSON response:', jsonError);
-        updateStatus('Error parsing server response. Please try again.', 'error');
-        document.getElementById('verify-dns-btn').disabled = false;
+      const checkData = await checkResponse.json();
+      
+      if (!checkResponse.ok || !checkData.success) {
+        // If DNS verification failed, show error and re-enable button
+        updateStatus(`DNS verification failed: ${checkData.message || 'Please check your DNS settings'}`, 'error');
+        if (checkData.details) {
+          const detailsHtml = `
+            <div class="alert alert-warning mt-3">
+              <h6>DNS Check Details:</h6>
+              <ul>
+                ${checkData.details.map(detail => `<li>${detail}</li>`).join('')}
+              </ul>
+            </div>
+          `;
+          statusContainer.innerHTML += detailsHtml;
+        }
+        
+        if (verifyBtn) {
+          verifyBtn.disabled = false;
+          verifyBtn.innerHTML = 'Try Again';
+        }
         return;
       }
       
-      if (response.ok) {
-        updateStatus('Certificate generation started. This may take a few minutes...', 'info');
+      // DNS verification succeeded
+      updateStatus('Step 2/3: DNS verified successfully! Generating certificate...', 'success');
+      
+      // Now, generate the certificate
+      const certResponse = await fetch(`${API_URL}/certificates/verify-dns`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store'
+        },
+        body: JSON.stringify({ 
+          domain,
+          useVerifiedChallenge: true
+        }),
+        credentials: 'include'
+      });
+      
+      const certData = await certResponse.json();
+      
+      if (certResponse.ok) {
+        updateStatus('Step 3/3: Certificate generation started. Please wait...', 'info');
         
-        // Clean up any existing polling first
+        // Clean up any existing polling and start new polling
         cleanupExistingPolling();
-        
-        // Start polling for status updates
         startStatusPolling();
       } else {
-        // Handle session issues
-        if (data.message && data.message.includes('No pending DNS certificate request')) {
-          updateStatus('Session expired or not found. Please refresh the page and try again.', 'error');
-          
-          // Show refresh button
-          const refreshBtn = document.createElement('button');
-          refreshBtn.className = 'btn btn-warning mt-3';
-          refreshBtn.textContent = 'Refresh Page';
-          refreshBtn.onclick = () => window.location.reload();
-          statusContainer.prepend(refreshBtn);
-          
-          return;
+        // If certificate generation failed, show error
+        updateStatus(`Certificate generation failed: ${certData.message || 'Please try again'}`, 'error');
+        if (verifyBtn) {
+          verifyBtn.disabled = false;
+          verifyBtn.innerHTML = 'Try Again';
         }
-        
-        updateStatus(`Error: ${data.error} - ${data.message}`, 'error');
-        // Re-enable the button in case of error
-        document.getElementById('verify-dns-btn').disabled = false;
       }
     } catch (error) {
-      console.error('Network error during verification:', error);
+      console.error('Error during verification process:', error);
       updateStatus(`Error: ${error.message}. Please try again.`, 'error');
-      // Re-enable the button in case of error
-      document.getElementById('verify-dns-btn').disabled = false;
+      if (verifyBtn) {
+        verifyBtn.disabled = false;
+        verifyBtn.innerHTML = 'Try Again';
+      }
     }
   }
   
@@ -339,32 +310,5 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Store the timer ID in a global variable so we can cancel it if needed
     window.currentPollTimer = pollTimer;
-  }
-  
-  // Function to update status display
-  function updateStatus(message, type) {
-    if (!statusContainer) return;
-    
-    const statusClass = {
-      'info': 'alert-info',
-      'success': 'alert-success',
-      'error': 'alert-danger',
-      'warning': 'alert-warning'
-    };
-    
-    // Append new status message
-    const statusHtml = `
-      <div class="alert ${statusClass[type]} mb-3">
-        ${message}
-      </div>
-    `;
-    
-    // Clear any default content if this is the first update
-    if (statusContainer.querySelector('.text-muted')) {
-      statusContainer.innerHTML = '';
-    }
-    
-    // Add the new status at the top
-    statusContainer.innerHTML = statusHtml + statusContainer.innerHTML;
   }
 }); 
