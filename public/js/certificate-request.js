@@ -21,7 +21,8 @@ document.addEventListener('DOMContentLoaded', function() {
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ domain, email, challengeType })
+          body: JSON.stringify({ domain, email, challengeType }),
+          credentials: 'same-origin' // Ensure cookies are sent
         });
         
         const data = await response.json();
@@ -95,6 +96,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const checkBtn = document.getElementById('check-dns-btn');
       if (checkBtn) checkBtn.disabled = true;
       
+      // Use a relative URL to avoid cross-domain issues
       const response = await fetch('/certificates/check-dns', {
         method: 'POST',
         headers: {
@@ -177,12 +179,23 @@ document.addEventListener('DOMContentLoaded', function() {
       const response = await fetch('/certificates/verify-dns', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
         },
-        body: JSON.stringify({ domain })
+        body: JSON.stringify({ domain }),
+        credentials: 'same-origin' // Ensure cookies are sent
       });
       
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        console.error('Error parsing JSON response:', jsonError);
+        updateStatus('Error parsing server response. Please try again.', 'error');
+        document.getElementById('verify-dns-btn').disabled = false;
+        return;
+      }
       
       if (response.ok) {
         updateStatus('Certificate generation started. This may take a few minutes...', 'info');
@@ -193,12 +206,27 @@ document.addEventListener('DOMContentLoaded', function() {
         // Start polling for status updates
         startStatusPolling();
       } else {
+        // Handle session issues
+        if (data.message && data.message.includes('No pending DNS certificate request')) {
+          updateStatus('Session expired or not found. Please refresh the page and try again.', 'error');
+          
+          // Show refresh button
+          const refreshBtn = document.createElement('button');
+          refreshBtn.className = 'btn btn-warning mt-3';
+          refreshBtn.textContent = 'Refresh Page';
+          refreshBtn.onclick = () => window.location.reload();
+          statusContainer.prepend(refreshBtn);
+          
+          return;
+        }
+        
         updateStatus(`Error: ${data.error} - ${data.message}`, 'error');
         // Re-enable the button in case of error
         document.getElementById('verify-dns-btn').disabled = false;
       }
     } catch (error) {
-      updateStatus(`Error: ${error.message}`, 'error');
+      console.error('Network error during verification:', error);
+      updateStatus(`Error: ${error.message}. Please try again.`, 'error');
       // Re-enable the button in case of error
       document.getElementById('verify-dns-btn').disabled = false;
     }
