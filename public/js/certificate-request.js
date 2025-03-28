@@ -16,7 +16,8 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Submitting certificate request...', 'info');
       
       try {
-        const response = await fetch('/certificates/generate', {
+        const currentOrigin = window.location.origin;
+        const response = await fetch(`${currentOrigin}/certificates/generate`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -96,8 +97,9 @@ document.addEventListener('DOMContentLoaded', function() {
       const checkBtn = document.getElementById('check-dns-btn');
       if (checkBtn) checkBtn.disabled = true;
       
-      // Use a relative URL to avoid cross-domain issues
-      const response = await fetch('/certificates/check-dns', {
+      // Use the current origin to make sure we're hitting the same server
+      const currentOrigin = window.location.origin;
+      const response = await fetch(`${currentOrigin}/certificates/check-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -176,7 +178,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('verify-dns-btn').disabled = true;
     
     try {
-      const response = await fetch('/certificates/verify-dns', {
+      const currentOrigin = window.location.origin;
+      const response = await fetch(`${currentOrigin}/certificates/verify-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -245,7 +248,8 @@ document.addEventListener('DOMContentLoaded', function() {
       pollCount++;
       
       try {
-        const response = await fetch('/certificates/status');
+        const currentOrigin = window.location.origin;
+        const response = await fetch(`${currentOrigin}/certificates/status`);
         const data = await response.json();
         
         // Log status data for debugging
