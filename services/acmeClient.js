@@ -420,8 +420,45 @@ async function completeDnsChallengeAndGetCertificate(domain, email) {
     await completeDnsChallenge(client, domain);
     
     // Finalize the order and get the certificate
+    console.log('Finalizing order...');
     await client.finalizeOrder(order, csrPem);
-    const certificate = await client.getCertificate(order);
+    
+    // Wait for the order to be finalized by Let's Encrypt
+    console.log('Order finalized, waiting 15 seconds for certificate to be issued...');
+    await new Promise(resolve => setTimeout(resolve, 15000));
+    
+    // Get the certificate with retries
+    console.log('Downloading certificate...');
+    let certificate;
+    const maxRetries = 5;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Get the latest order status
+        const finalOrder = await client.getOrder(order);
+        console.log(`Certificate download attempt ${attempt}/${maxRetries}, Order status: ${finalOrder.status}`);
+        
+        // Download the certificate
+        certificate = await client.getCertificate(order);
+        console.log('Certificate downloaded successfully!');
+        break;
+      } catch (certError) {
+        if (certError.message.includes('URL not found') && attempt < maxRetries) {
+          const waitTime = attempt * 10000; // Increase wait time with each attempt
+          console.log(`Certificate URL not available yet. Waiting ${waitTime/1000} seconds before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        } else if (attempt >= maxRetries) {
+          console.log(`Failed to download certificate after ${maxRetries} attempts.`);
+          throw certError;
+        } else {
+          throw certError;
+        }
+      }
+    }
+    
+    if (!certificate) {
+      throw new Error('Failed to download certificate after multiple attempts');
+    }
     
     // Save the certificate and private key to files
     const domainSafe = domain.replace(/\*/g, 'wildcard').replace(/[^a-z0-9]/gi, '_');
@@ -546,8 +583,42 @@ async function generateCertificateWithVerifiedDns(domain, email) {
       }
     }
     
-    // Get the certificate
-    const certificate = await client.getCertificate(order);
+    // Wait for the order to be finalized by Let's Encrypt
+    console.log('Order finalized, waiting 15 seconds for certificate to be issued...');
+    await new Promise(resolve => setTimeout(resolve, 15000));
+    
+    // Get the certificate with retries
+    console.log('Downloading certificate...');
+    let certificate;
+    const maxRetries = 5;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Get the latest order status
+        const finalOrder = await client.getOrder(order);
+        console.log(`Certificate download attempt ${attempt}/${maxRetries}, Order status: ${finalOrder.status}`);
+        
+        // Download the certificate
+        certificate = await client.getCertificate(order);
+        console.log('Certificate downloaded successfully!');
+        break;
+      } catch (certError) {
+        if (certError.message.includes('URL not found') && attempt < maxRetries) {
+          const waitTime = attempt * 10000; // Increase wait time with each attempt
+          console.log(`Certificate URL not available yet. Waiting ${waitTime/1000} seconds before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        } else if (attempt >= maxRetries) {
+          console.log(`Failed to download certificate after ${maxRetries} attempts.`);
+          throw certError;
+        } else {
+          throw certError;
+        }
+      }
+    }
+    
+    if (!certificate) {
+      throw new Error('Failed to download certificate after multiple attempts');
+    }
     
     // Save the certificate and private key to files
     const domainSafe = domain.replace(/\*/g, 'wildcard').replace(/[^a-z0-9]/gi, '_');
