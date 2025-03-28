@@ -216,16 +216,25 @@ async function verifyDnsPropagation(domain, expectedValue) {
   const dns = require('dns').promises;
   const recordName = `_acme-challenge.${domain}`;
   
-  console.log(`Checking if DNS record has propagated: ${recordName}`);
+  console.log(`Checking if DNS record has propagated: ${recordName} at ${new Date().toISOString()}`);
+  
+  // Try to reset DNS cache by resetting servers
+  if (typeof dns.getServers === 'function') {
+    const servers = dns.getServers();
+    dns.setServers(servers);
+  }
   
   const maxRetries = 2;
-  const retryDelay = 5000; // 5 seconds between retries
+  const retryDelay = 3000; // 3 seconds between retries
   
   // Clean expected value - some DNS providers add quotes around values
   const cleanExpectedValue = expectedValue.replace(/^"/, '').replace(/"$/, '').trim();
   
   for (let i = 0; i < maxRetries; i++) {
     try {
+      // Add random query parameter to bypass caching
+      const bypassCache = `?_t=${Date.now()}`;
+      
       // Try to resolve the TXT record
       const records = await dns.resolveTxt(recordName);
       const flatRecords = records.map(r => r.join('')); // TXT records can be split

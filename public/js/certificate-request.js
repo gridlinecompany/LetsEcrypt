@@ -90,12 +90,22 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Function to check DNS propagation
   async function checkDnsPropagation(domain) {
-    updateStatus('Checking DNS propagation...', 'info');
+    // Clear any previous check results first
+    const previousResults = document.querySelectorAll('.dns-check-result');
+    previousResults.forEach(el => el.remove());
+    
+    // Update status with timestamp to show it's a new check
+    const timestamp = new Date().toLocaleTimeString();
+    updateStatus(`[${timestamp}] Checking DNS propagation...`, 'info');
     
     try {
-      // Disable the button during checking
+      // Disable the button during checking and show spinner
       const checkBtn = document.getElementById('check-dns-btn');
-      if (checkBtn) checkBtn.disabled = true;
+      if (checkBtn) {
+        checkBtn.disabled = true;
+        const originalText = checkBtn.innerHTML;
+        checkBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking...';
+      }
       
       // Use the current origin to make sure we're hitting the same server
       const currentOrigin = window.location.origin;
@@ -103,33 +113,47 @@ document.addEventListener('DOMContentLoaded', function() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache',
+          'Cache-Control': 'no-cache, no-store',
           'Pragma': 'no-cache'
         },
-        body: JSON.stringify({ domain }),
+        body: JSON.stringify({ 
+          domain,
+          _t: Date.now() // Add timestamp to prevent caching
+        }),
         credentials: 'same-origin' // This ensures cookies (including session) are sent
       });
       
-      // Re-enable the button
-      if (checkBtn) checkBtn.disabled = false;
+      // Re-enable the button and restore text
+      if (checkBtn) {
+        checkBtn.disabled = false;
+        checkBtn.innerHTML = 'Check DNS Propagation';
+      }
       
       let data;
       try {
         data = await response.json();
       } catch (jsonError) {
         console.error('Error parsing JSON response:', jsonError);
-        updateStatus('Error parsing server response. Please try again.', 'error');
+        updateStatus(`[${timestamp}] Error parsing server response. Please try again.`, 'error');
         return;
       }
       
       if (response.ok && data.success) {
-        updateStatus('DNS check successful! DNS record has been properly set.', 'success');
+        // Create result with timestamp
+        const resultHtml = `
+          <div class="alert alert-success mb-3 dns-check-result">
+            <strong>[${timestamp}] DNS check successful!</strong> 
+            <p>DNS record has been properly set and verified.</p>
+          </div>
+        `;
+        statusContainer.innerHTML = resultHtml + statusContainer.innerHTML;
+        
         // Enable the certificate generation button
         document.getElementById('verify-dns-btn').disabled = false;
       } else {
         // Handle session issues
         if (data.message && data.message.includes('No pending DNS certificate request')) {
-          updateStatus('Session expired or not found. Please refresh the page and try again.', 'error');
+          updateStatus(`[${timestamp}] Session expired or not found. Please refresh the page and try again.`, 'error');
           
           // Show refresh button
           const refreshBtn = document.createElement('button');
@@ -141,23 +165,30 @@ document.addEventListener('DOMContentLoaded', function() {
           return;
         }
         
-        updateStatus(`DNS check failed: ${data.message}`, 'error');
+        updateStatus(`[${timestamp}] DNS check failed: ${data.message}`, 'error');
         // Show detailed information if available
         if (data.details) {
           const detailsHtml = `
-            <div class="alert alert-warning mt-3">
+            <div class="alert alert-warning mt-3 dns-check-result">
               <h6>DNS Check Details:</h6>
               <ul>
                 ${data.details.map(detail => `<li>${detail}</li>`).join('')}
               </ul>
             </div>
           `;
-          statusContainer.innerHTML += detailsHtml;
+          statusContainer.innerHTML = detailsHtml + statusContainer.innerHTML;
         }
       }
     } catch (error) {
       console.error('Network error during DNS check:', error);
-      updateStatus(`Error checking DNS: ${error.message}. Please try again.`, 'error');
+      updateStatus(`[${timestamp}] Error checking DNS: ${error.message}. Please try again.`, 'error');
+      
+      // Re-enable the button in case of error
+      const checkBtn = document.getElementById('check-dns-btn');
+      if (checkBtn) {
+        checkBtn.disabled = false;
+        checkBtn.innerHTML = 'Check DNS Propagation';
+      }
     }
   }
   

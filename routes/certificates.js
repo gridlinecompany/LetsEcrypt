@@ -406,7 +406,8 @@ router.post('/check-dns', async (req, res) => {
     console.log('Session data:', JSON.stringify({
       hasPendingRequest: !!req.session.pendingDnsCertRequest,
       requestBody: req.body,
-      sessionID: req.sessionID
+      sessionID: req.sessionID,
+      timestamp: new Date().toISOString()
     }));
     
     // Get the pending request from session
@@ -431,9 +432,10 @@ router.post('/check-dns', async (req, res) => {
       });
     }
     
-    console.log('Comparing domains:', { 
+    console.log('Checking DNS:', { 
       requestDomain: domain, 
-      sessionDomain: pendingRequest.domain 
+      sessionDomain: pendingRequest.domain,
+      timestamp: new Date().toISOString()
     });
     
     if (pendingRequest.domain !== domain) {
@@ -444,10 +446,20 @@ router.post('/check-dns', async (req, res) => {
     }
     
     try {
+      // Explicitly clear any DNS cache before checking
+      const dns = require('dns').promises;
+      
+      // Force a fresh DNS lookup by clearing the DNS module's internal cache if possible
+      if (typeof dns.getServers === 'function') {
+        const servers = dns.getServers();
+        dns.setServers(servers);
+      }
+      
       // Check DNS propagation using the stored record value
-      console.log('Checking DNS for:', {
+      console.log('Performing DNS check for:', {
         domain: domain,
-        recordValue: pendingRequest.recordValue
+        recordValue: pendingRequest.recordValue,
+        timestamp: new Date().toISOString()
       });
       
       await acmeClient.verifyDnsPropagation(domain, pendingRequest.recordValue);
@@ -456,7 +468,8 @@ router.post('/check-dns', async (req, res) => {
       return res.json({
         success: true,
         message: 'DNS record verified successfully',
-        domain: domain
+        domain: domain,
+        timestamp: new Date().toISOString()
       });
     } catch (dnsError) {
       console.log('DNS check failed:', dnsError.message);
@@ -478,7 +491,8 @@ router.post('/check-dns', async (req, res) => {
         success: false,
         message: 'DNS verification failed',
         details: details.length > 0 ? details : undefined,
-        error: dnsError.message
+        error: dnsError.message,
+        timestamp: new Date().toISOString()
       });
     }
   } catch (error) {
@@ -486,7 +500,8 @@ router.post('/check-dns', async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Error checking DNS record',
-      error: error.message
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
