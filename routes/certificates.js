@@ -413,17 +413,8 @@ router.post('/check-dns', async (req, res) => {
     // Get the pending request from session
     const pendingRequest = req.session.pendingDnsCertRequest;
     
-    if (!pendingRequest) {
-      // For debugging: check entire session
-      console.log('Full session:', JSON.stringify(req.session));
-      
-      return res.status(400).json({
-        success: false,
-        message: 'No pending DNS certificate request found. Please start a new certificate request.'
-      });
-    }
-    
-    const { domain } = req.body;
+    // Extract domain and recordValue from the request body
+    const { domain, recordValue: requestRecordValue } = req.body;
     
     if (!domain) {
       return res.status(400).json({
@@ -432,18 +423,33 @@ router.post('/check-dns', async (req, res) => {
       });
     }
     
-    console.log('Checking DNS:', { 
-      requestDomain: domain, 
-      sessionDomain: pendingRequest.domain,
-      timestamp: new Date().toISOString()
-    });
+    // Use session data if available, otherwise use request data
+    let recordValue;
+    let recordName;
     
-    if (pendingRequest.domain !== domain) {
+    if (pendingRequest && pendingRequest.domain === domain) {
+      console.log('Using record value from session');
+      recordValue = pendingRequest.recordValue;
+      recordName = pendingRequest.recordName;
+    } else if (requestRecordValue) {
+      console.log('Using record value from request body');
+      recordValue = requestRecordValue;
+      recordName = `_acme-challenge.${domain}`;
+    } else {
+      // For debugging: check entire session
+      console.log('Full session:', JSON.stringify(req.session));
+      
       return res.status(400).json({
         success: false,
-        message: `Domain mismatch. Request domain: ${domain}, stored domain: ${pendingRequest.domain}`
+        message: 'No DNS challenge information found. Please provide record value or start a new certificate request.'
       });
     }
+    
+    console.log('Checking DNS:', { 
+      domain,
+      recordValue,
+      timestamp: new Date().toISOString()
+    });
     
     try {
       // Explicitly clear any DNS cache before checking
@@ -458,17 +464,19 @@ router.post('/check-dns', async (req, res) => {
       // Check DNS propagation using the stored record value
       console.log('Performing DNS check for:', {
         domain: domain,
-        recordValue: pendingRequest.recordValue,
+        recordValue: recordValue,
         timestamp: new Date().toISOString()
       });
       
-      await acmeClient.verifyDnsPropagation(domain, pendingRequest.recordValue);
+      // Call the verifyDnsPropagation function
+      await acmeClient.verifyDnsPropagation(domain, recordValue);
       
       // If we get here, DNS record is correctly set
       return res.json({
         success: true,
         message: 'DNS record verified successfully',
         domain: domain,
+        recordValue: recordValue, // Include the value that was checked
         timestamp: new Date().toISOString()
       });
     } catch (dnsError) {
@@ -478,12 +486,12 @@ router.post('/check-dns', async (req, res) => {
       
       if (dnsError.message.includes('DNS record not found')) {
         details.push('The DNS record could not be found. It may not have propagated yet.');
-        details.push(`Check that you created a TXT record with name: ${pendingRequest.recordName}`);
-        details.push(`And value: ${pendingRequest.recordValue}`);
+        details.push(`Check that you created a TXT record with name: ${recordName}`);
+        details.push(`And value: ${recordValue}`);
         details.push('DNS changes can take 5 minutes to 48 hours to propagate fully.');
       } else if (dnsError.message.includes('doesn\'t match expected value')) {
         details.push('The DNS record was found but has an incorrect value.');
-        details.push(`The value should be exactly: ${pendingRequest.recordValue}`);
+        details.push(`The value should be exactly: ${recordValue}`);
         details.push('Make sure there are no extra spaces or quotes in the value.');
       }
       

@@ -109,6 +109,10 @@ document.addEventListener('DOMContentLoaded', function() {
         checkBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking...';
       }
       
+      // Get the recordValue directly from the DOM to avoid session dependency
+      const recordValueElement = document.querySelector('.card-body code:nth-of-type(2)');
+      const recordValue = recordValueElement ? recordValueElement.textContent.trim() : '';
+      
       const response = await fetch(`${API_URL}/certificates/check-dns`, {
         method: 'POST',
         headers: {
@@ -118,6 +122,7 @@ document.addEventListener('DOMContentLoaded', function() {
         },
         body: JSON.stringify({ 
           domain,
+          recordValue, // Send the record value in the request
           _t: Date.now() // Add timestamp to prevent caching
         }),
         credentials: 'include' // Use include for cross-domain requests
