@@ -8,18 +8,22 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+  <%- include('partials/header') %>
+
   <div class="container mt-5">
     <div class="row justify-content-center">
       <div class="col-md-6">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h2 class="card-title text-center mb-4">Create Account</h2>
+        <div class="card shadow">
+          <div class="card-body p-5">
+            <h2 class="text-center mb-4">Create an Account</h2>
             
             <% if (error) { %>
-              <div class="alert alert-danger mb-3"><%= error %></div>
+              <div class="alert alert-danger">
+                <%= error %>
+              </div>
             <% } %>
             
-            <form action="/users/register" method="POST">
+            <form id="register-form" method="POST" action="/users/register">
               <div class="mb-3">
                 <label for="name" class="form-label">Full Name</label>
                 <input type="text" class="form-control" id="name" name="name" required>
@@ -35,23 +39,55 @@
                 <input type="password" class="form-control" id="password" name="password" required>
               </div>
               
-              <div class="d-grid mt-4">
-                <button type="submit" class="btn btn-primary">Register</button>
+              <div class="d-grid gap-2 mt-4">
+                <button type="submit" id="register-button" class="btn btn-primary">Register</button>
               </div>
             </form>
             
             <div class="text-center mt-3">
-              <p>Already have an account? <a href="/users/login">Login</a></p>
+              <p>Already have an account? <a href="/users/login">Log In</a></p>
             </div>
           </div>
         </div>
       </div>
     </div>
   </div>
-  
-  <footer class="text-center mt-5 mb-3">
-    <p class="text-muted">Let's Encrypt Certificate Generator © <%= new Date().getFullYear() %></p>
-  </footer>
+
+  <script>
+  document.addEventListener('DOMContentLoaded', function() {
+    console.log('Registration page loaded');
+    
+    const registerForm = document.getElementById('register-form');
+    const registerButton = document.getElementById('register-button');
+    
+    if (registerForm) {
+      console.log('Registration form found');
+      
+      registerForm.addEventListener('submit', function(event) {
+        console.log('Form submit event triggered');
+        
+        // You can add validation here if needed
+        
+        // Form will submit normally
+      });
+    } else {
+      console.error('Registration form not found!');
+    }
+    
+    if (registerButton) {
+      console.log('Register button found');
+      
+      registerButton.addEventListener('click', function(event) {
+        console.log('Register button clicked');
+        // The button is already type="submit" so we don't need to manually submit
+      });
+    } else {
+      console.error('Register button not found!');
+    }
+  });
+  </script>
+
+  <%- include('partials/footer') %>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
