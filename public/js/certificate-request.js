@@ -46,8 +46,8 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Preparing certificate request...', 'info');
       
       try {
-        // Make API request to start certificate request
-        const response = await fetch(`/certificates/request`, {
+        // Make API request to start certificate request - using correct endpoint
+        const response = await fetch(`/certificates/generate`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -73,9 +73,11 @@ document.addEventListener('DOMContentLoaded', function() {
           submitBtn.innerHTML = 'Request Certificate';
         }
         
-        if (response.ok) {
+        if (data.success) {
           if (challengeType === 'dns') {
-            displayDnsRecordInfo(data.dnsData);
+            // For DNS challenge, access the correct property from response
+            // The /generate endpoint returns the DNS data directly, not nested in dnsData
+            displayDnsRecordInfo(data);
           } else {
             // For HTTP challenge, start polling for certificate status
             updateStatus('HTTP challenge initialized. Attempting verification...', 'info');
@@ -83,7 +85,7 @@ document.addEventListener('DOMContentLoaded', function() {
             startStatusPolling();
           }
         } else {
-          updateStatus(`Error: ${data.message}`, 'error');
+          updateStatus(`Error: ${data.message || 'Unknown error occurred'}`, 'error');
         }
       } catch (error) {
         console.error('Error requesting certificate:', error);
@@ -103,10 +105,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const dnsInfoContainer = document.getElementById('dns-info');
     if (!dnsInfoContainer) return;
 
+    console.log('DNS data received:', data);
+
     // Access the correct properties based on server response structure
-    const domain = data.domain;
-    const recordName = data.recordName;
-    const recordValue = data.recordValue;
+    // The /generate endpoint returns different structure than we expected
+    const domain = data.domain || '';
+    const recordName = data.recordName || '';
+    const recordValue = data.recordValue || '';
     
     // Make the container visible
     dnsInfoContainer.classList.remove('d-none');
