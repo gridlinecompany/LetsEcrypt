@@ -34,6 +34,28 @@ function getUserCertificates(userId) {
   return certificates.filter(cert => cert.userId === userId);
 }
 
+// Helper function to extract detailed error information
+function extractErrorDetails(error) {
+  const details = [];
+  
+  if (error.message.includes('Invalid response')) {
+    details.push('The DNS record could not be verified by Let\'s Encrypt.');
+    details.push('This typically happens when the DNS record is not properly propagated.');
+  } else if (error.message.includes('No pending DNS challenge')) {
+    details.push('No pending challenge was found. The challenge may have expired.');
+    details.push('Please restart the certificate request process.');
+  } else if (error.message.includes('timeout')) {
+    details.push('The verification process timed out.');
+    details.push('DNS propagation can take time. Please wait and try again.');
+  } else if (error.message.includes('rate limit')) {
+    details.push('Let\'s Encrypt rate limit hit.');
+    details.push('You may have requested too many certificates recently.');
+    details.push('Please wait at least 1 hour before trying again.');
+  }
+  
+  return details.length > 0 ? details : ['An unexpected error occurred. Please try again later.'];
+}
+
 // Dashboard - show all user certificates
 router.get('/dashboard', (req, res) => {
   const userCerts = getUserCertificates(req.session.user.id);
@@ -112,11 +134,39 @@ router.post('/generate', async (req, res) => {
       process.nextTick(async () => {
         try {
           const result = await acmeClient.generateCertificateHttp(domain, email);
-          // Store the result for later retrieval
-          // You could save this to a database or session
+          
+          // Save certificate info to database
+          const certificates = getCertificates();
+          const newCert = {
+            id: Date.now().toString(),
+            userId: req.session.user ? req.session.user.id : 'guest',
+            domain,
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+            certificatePath: result.certificatePath,
+            privateKeyPath: result.privateKeyPath,
+            verificationMethod: 'http'
+          };
+          
+          certificates.push(newCert);
+          saveCertificates(certificates);
+          
+          // Store the completion info in session
+          req.session.completedCertificate = {
+            domain,
+            id: newCert.id,
+            certificatePath: result.certificatePath
+          };
+          
           console.log('Certificate generated successfully:', result.certificatePath);
         } catch (error) {
           console.error('Background certificate generation failed:', error);
+          
+          // Store the error in session
+          req.session.certificateError = {
+            message: error.message,
+            details: extractErrorDetails(error)
+          };
         }
       });
     }
@@ -153,11 +203,40 @@ router.post('/verify-dns', async (req, res) => {
       try {
         const result = await acmeClient.completeDnsChallengeAndGetCertificate(domain, email);
         console.log('Certificate generated successfully:', result.certificatePath);
+        
+        // Save certificate info to database
+        const certificates = getCertificates();
+        const newCert = {
+          id: Date.now().toString(),
+          userId: req.session.user ? req.session.user.id : 'guest',
+          domain,
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+          certificatePath: result.certificatePath,
+          privateKeyPath: result.privateKeyPath,
+          verificationMethod: 'dns'
+        };
+        
+        certificates.push(newCert);
+        saveCertificates(certificates);
+        
+        // Store the completion info in session
+        req.session.completedCertificate = {
+          domain,
+          id: newCert.id,
+          certificatePath: result.certificatePath
+        };
+        
         // Clear the pending request
         req.session.pendingDnsCertRequest = null;
-        // You could store the result in a database for retrieval
       } catch (error) {
         console.error('Background DNS verification failed:', error);
+        
+        // Store the error in session
+        req.session.certificateError = {
+          message: error.message,
+          details: extractErrorDetails(error)
+        };
       }
     });
   } catch (error) {
@@ -168,9 +247,37 @@ router.post('/verify-dns', async (req, res) => {
 
 // Add a status endpoint to check certificate generation status
 router.get('/status', (req, res) => {
-  // Here you would check the status of a certificate request
-  // This could query a database or check session data
+  // Get any pending request from session
   const pendingRequest = req.session.pendingDnsCertRequest;
+  
+  // Get any completed certificates from session
+  const completedCert = req.session.completedCertificate;
+  
+  // Check for errors
+  const certError = req.session.certificateError;
+  
+  if (certError) {
+    // Return the error and clear it
+    const error = { ...certError };
+    req.session.certificateError = null;
+    return res.json({
+      status: 'error',
+      message: error.message,
+      details: error.details
+    });
+  }
+  
+  if (completedCert) {
+    // Return completed status and clear it
+    const cert = { ...completedCert };
+    req.session.completedCertificate = null;
+    return res.json({
+      status: 'completed',
+      domain: cert.domain,
+      message: 'Certificate has been successfully generated',
+      certificateId: cert.id
+    });
+  }
   
   if (pendingRequest) {
     return res.json({
@@ -180,7 +287,8 @@ router.get('/status', (req, res) => {
         name: pendingRequest.recordName,
         value: pendingRequest.recordValue
       },
-      requestTime: pendingRequest.requestTime
+      requestTime: pendingRequest.requestTime,
+      elapsedTime: Date.now() - pendingRequest.requestTime
     });
   }
   
