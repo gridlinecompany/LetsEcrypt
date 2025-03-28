@@ -1,5 +1,8 @@
 // Certificate request handling
 document.addEventListener('DOMContentLoaded', function() {
+  // Use fixed API URL instead of dynamic window.location.origin
+  const API_URL = 'https://freesslcerts.com';
+  
   const certForm = document.getElementById('certificate-form');
   const dnsVerifyForm = document.getElementById('dns-verify-form');
   const statusContainer = document.getElementById('status-container');
@@ -16,14 +19,13 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Submitting certificate request...', 'info');
       
       try {
-        const currentOrigin = window.location.origin;
-        const response = await fetch(`${currentOrigin}/certificates/generate`, {
+        const response = await fetch(`${API_URL}/certificates/generate`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({ domain, email, challengeType }),
-          credentials: 'same-origin' // Ensure cookies are sent
+          credentials: 'include' // Use include for cross-domain
         });
         
         const data = await response.json();
@@ -107,9 +109,7 @@ document.addEventListener('DOMContentLoaded', function() {
         checkBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking...';
       }
       
-      // Use the current origin to make sure we're hitting the same server
-      const currentOrigin = window.location.origin;
-      const response = await fetch(`${currentOrigin}/certificates/check-dns`, {
+      const response = await fetch(`${API_URL}/certificates/check-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', function() {
           domain,
           _t: Date.now() // Add timestamp to prevent caching
         }),
-        credentials: 'same-origin' // This ensures cookies (including session) are sent
+        credentials: 'include' // Use include for cross-domain requests
       });
       
       // Re-enable the button and restore text
@@ -209,16 +209,15 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('verify-dns-btn').disabled = true;
     
     try {
-      const currentOrigin = window.location.origin;
-      const response = await fetch(`${currentOrigin}/certificates/verify-dns`, {
+      const response = await fetch(`${API_URL}/certificates/verify-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache',
+          'Cache-Control': 'no-cache, no-store',
           'Pragma': 'no-cache'
         },
         body: JSON.stringify({ domain }),
-        credentials: 'same-origin' // Ensure cookies are sent
+        credentials: 'include' // Use include for cross-domain
       });
       
       let data;
@@ -279,8 +278,10 @@ document.addEventListener('DOMContentLoaded', function() {
       pollCount++;
       
       try {
-        const currentOrigin = window.location.origin;
-        const response = await fetch(`${currentOrigin}/certificates/status`);
+        const response = await fetch(`${API_URL}/certificates/status`, {
+          credentials: 'include', // Use include for cross-domain
+          cache: 'no-store' // Prevent caching
+        });
         const data = await response.json();
         
         // Log status data for debugging
