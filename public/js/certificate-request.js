@@ -108,10 +108,20 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('DNS data received:', data);
 
     // Access the correct properties based on server response structure
-    // The /generate endpoint returns different structure than we expected
-    const domain = data.domain || '';
-    const recordName = data.recordName || '';
-    const recordValue = data.recordValue || '';
+    // The data structure from /generate endpoint has dnsData nested
+    let dnsData = data;
+    
+    // If data contains a dnsData property, use that instead
+    if (data.dnsData) {
+      console.log('Using nested dnsData property');
+      dnsData = data.dnsData;
+    }
+    
+    const domain = dnsData.domain || '';
+    const recordName = dnsData.recordName || '';
+    const recordValue = dnsData.recordValue || '';
+    
+    console.log('Extracted DNS data:', { domain, recordName, recordValue });
     
     // Make the container visible
     dnsInfoContainer.classList.remove('d-none');
@@ -139,7 +149,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Add event listener to the verify DNS button
     document.getElementById('verify-dns-btn').addEventListener('click', function() {
-      verifyCertificateProcess(domain);
+      verifyCertificateProcess(domain || dnsData.domain || data.domain);
     });
     
     // Show status container with initial message
@@ -159,6 +169,8 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Combined function for DNS verification and certificate generation
   async function verifyCertificateProcess(domain) {
+    console.log('Verify process started for domain:', domain);
+    
     // Get the button and disable it to prevent multiple clicks
     const verifyBtn = document.getElementById('verify-dns-btn');
     if (verifyBtn) {
@@ -169,11 +181,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // Get the recordValue directly from the DOM
     const recordValueElement = document.querySelector('.card-body code:nth-of-type(2)');
     const recordValue = recordValueElement ? recordValueElement.textContent.trim() : '';
+    console.log('Using record value from DOM:', recordValue);
     
     updateStatus('Step 1/3: Verifying DNS record... (This may take a few moments)', 'info');
     
     try {
       // First, verify the DNS record
+      console.log('Sending check-dns request with:', { domain, recordValue });
       const checkResponse = await fetch(`/certificates/check-dns`, {
         method: 'POST',
         headers: {
@@ -194,6 +208,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       const checkData = await checkResponse.json();
+      console.log('DNS check response:', checkData);
       
       if (!checkData.success) {
         // If DNS verification failed, show error and re-enable button
