@@ -27,10 +27,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Session setup
 app.use(session({
-  store: new fileStore(),
+  store: new fileStore({
+    path: path.join(__dirname, 'sessions'),
+    ttl: 86400,  // 24 hours in seconds
+    retries: 5,
+    reapInterval: 3600  // 1 hour in seconds
+  }),
   secret: process.env.SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
+  resave: true,  // Changed to true to ensure session is saved
+  saveUninitialized: true,  // Changed to true to create session for all requests
+  rolling: true, // Reset maxAge on each response
   cookie: { 
     maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week
     secure: isProduction,

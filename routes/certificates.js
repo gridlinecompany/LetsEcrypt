@@ -111,6 +111,19 @@ router.post('/generate', async (req, res) => {
         requestTime: Date.now()
       };
       
+      // Explicitly save the session to ensure data is persisted
+      await new Promise((resolve, reject) => {
+        req.session.save(err => {
+          if (err) {
+            console.error('Session save error:', err);
+            reject(err);
+          } else {
+            console.log('Session saved successfully with pendingDnsCertRequest');
+            resolve();
+          }
+        });
+      });
+      
       return res.status(200).json({
         success: true,
         message: 'DNS challenge prepared successfully',
@@ -179,17 +192,43 @@ router.post('/generate', async (req, res) => {
 // Add a new endpoint to verify DNS and complete the certificate process
 router.post('/verify-dns', async (req, res) => {
   try {
+    // Debug session data
+    console.log('Verify DNS session data:', JSON.stringify({
+      hasPendingRequest: !!req.session.pendingDnsCertRequest,
+      requestBody: req.body,
+      sessionID: req.sessionID
+    }));
+    
     // Get the pending request from session
     const pendingRequest = req.session.pendingDnsCertRequest;
     
     if (!pendingRequest) {
       return res.status(400).json({
+        success: false,
         error: 'No pending DNS certificate request found',
         message: 'Please start a new certificate request'
       });
     }
     
-    const { domain, email } = pendingRequest;
+    const { domain } = req.body;
+    
+    if (!domain) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing domain',
+        message: 'Domain is required'
+      });
+    }
+    
+    if (pendingRequest.domain !== domain) {
+      return res.status(400).json({
+        success: false,
+        error: 'Domain mismatch',
+        message: `Domain mismatch. Request domain: ${domain}, stored domain: ${pendingRequest.domain}`
+      });
+    }
+    
+    const { email } = pendingRequest;
     
     // Start the verification process but respond quickly
     res.status(202).json({
@@ -229,6 +268,15 @@ router.post('/verify-dns', async (req, res) => {
         
         // Clear the pending request
         req.session.pendingDnsCertRequest = null;
+        
+        // Save session explicitly
+        req.session.save(err => {
+          if (err) {
+            console.error('Error saving session after certificate completion:', err);
+          } else {
+            console.log('Session saved successfully after certificate completion');
+          }
+        });
       } catch (error) {
         console.error('Background DNS verification failed:', error);
         
@@ -237,6 +285,15 @@ router.post('/verify-dns', async (req, res) => {
           message: error.message,
           details: extractErrorDetails(error)
         };
+        
+        // Save session explicitly
+        req.session.save(err => {
+          if (err) {
+            console.error('Error saving session after certificate error:', err);
+          } else {
+            console.log('Session saved successfully after certificate error');
+          }
+        });
       }
     });
   } catch (error) {
@@ -345,27 +402,54 @@ router.get('/.well-known/acme-challenge/:token', (req, res) => {
 // Add a new endpoint to check DNS propagation
 router.post('/check-dns', async (req, res) => {
   try {
+    // Debug session data
+    console.log('Session data:', JSON.stringify({
+      hasPendingRequest: !!req.session.pendingDnsCertRequest,
+      requestBody: req.body,
+      sessionID: req.sessionID
+    }));
+    
     // Get the pending request from session
     const pendingRequest = req.session.pendingDnsCertRequest;
     
     if (!pendingRequest) {
+      // For debugging: check entire session
+      console.log('Full session:', JSON.stringify(req.session));
+      
       return res.status(400).json({
         success: false,
-        message: 'No pending DNS certificate request found'
+        message: 'No pending DNS certificate request found. Please start a new certificate request.'
       });
     }
     
     const { domain } = req.body;
     
+    if (!domain) {
+      return res.status(400).json({
+        success: false,
+        message: 'Domain is required'
+      });
+    }
+    
+    console.log('Comparing domains:', { 
+      requestDomain: domain, 
+      sessionDomain: pendingRequest.domain 
+    });
+    
     if (pendingRequest.domain !== domain) {
       return res.status(400).json({
         success: false,
-        message: 'Domain mismatch with pending request'
+        message: `Domain mismatch. Request domain: ${domain}, stored domain: ${pendingRequest.domain}`
       });
     }
     
     try {
       // Check DNS propagation using the stored record value
+      console.log('Checking DNS for:', {
+        domain: domain,
+        recordValue: pendingRequest.recordValue
+      });
+      
       await acmeClient.verifyDnsPropagation(domain, pendingRequest.recordValue);
       
       // If we get here, DNS record is correctly set
