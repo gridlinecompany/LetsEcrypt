@@ -35,6 +35,17 @@ document.addEventListener('DOMContentLoaded', function() {
       const email = document.getElementById('email').value.trim();
       const challengeType = document.querySelector('input[name="challengeType"]:checked').value;
       
+      // Validate inputs
+      if (!domain) {
+        updateStatus('Please enter a domain name', 'error');
+        return;
+      }
+      
+      if (!email) {
+        updateStatus('Please enter an email address', 'error');
+        return;
+      }
+      
       // Disable form submission button
       const submitBtn = document.getElementById('request-cert-btn');
       if (submitBtn) {
@@ -46,8 +57,11 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Preparing certificate request...', 'info');
       
       try {
+        // Use relative path for URLs
+        const baseUrl = '';
+        
         // Make API request to start certificate request - using correct endpoint
-        const response = await fetch(`/certificates/generate`, {
+        const response = await fetch(`${baseUrl}/certificates/generate`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -66,6 +80,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         const data = await response.json();
+        console.log('Certificate request response:', data);
         
         // Re-enable form submission button
         if (submitBtn) {
@@ -76,8 +91,15 @@ document.addEventListener('DOMContentLoaded', function() {
         if (data.success) {
           if (challengeType === 'dns') {
             // For DNS challenge, access the correct property from response
-            // The /generate endpoint returns the DNS data directly, not nested in dnsData
-            displayDnsRecordInfo(data);
+            // Extract the dnsData from the response
+            const dnsData = data.dnsData || {};
+            
+            // Add domain if it's missing in dnsData
+            if (!dnsData.domain) {
+              dnsData.domain = domain;
+            }
+            
+            displayDnsRecordInfo(dnsData);
           } else {
             // For HTTP challenge, start polling for certificate status
             updateStatus('HTTP challenge initialized. Attempting verification...', 'info');
@@ -108,7 +130,6 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('DNS data received:', data);
 
     // Access the correct properties based on server response structure
-    // The data structure from /generate endpoint has dnsData nested
     let dnsData = data;
     
     // If data contains a dnsData property, use that instead
@@ -117,7 +138,8 @@ document.addEventListener('DOMContentLoaded', function() {
       dnsData = data.dnsData;
     }
     
-    const domain = dnsData.domain || '';
+    // Get domain from session data or from input field as fallback
+    const domain = dnsData.domain || document.getElementById('domain').value.trim();
     const recordName = dnsData.recordName || '';
     const recordValue = dnsData.recordValue || '';
     
@@ -128,7 +150,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Display the DNS record information in a card
     dnsInfoContainer.innerHTML = `
-      <div class="card mt-4">
+      <div class="card mt-4" data-domain="${domain}" data-record-value="${recordValue}">
         <div class="card-header bg-primary text-white">
           <h5 class="mb-0">DNS Challenge Details</h5>
         </div>
@@ -149,7 +171,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Add event listener to the verify DNS button
     document.getElementById('verify-dns-btn').addEventListener('click', function() {
-      verifyCertificateProcess(domain || dnsData.domain || data.domain);
+      verifyCertificateProcess(domain);
     });
     
     // Show status container with initial message
@@ -178,17 +200,53 @@ document.addEventListener('DOMContentLoaded', function() {
       verifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Verifying DNS and Generating Certificate...';
     }
     
-    // Get the recordValue directly from the DOM
-    const recordValueElement = document.querySelector('.card-body code:nth-of-type(2)');
-    const recordValue = recordValueElement ? recordValueElement.textContent.trim() : '';
-    console.log('Using record value from DOM:', recordValue);
+    // If domain is not provided, try to get it from the data attribute or input field
+    if (!domain) {
+      const dnsCard = document.querySelector('#dns-info .card');
+      if (dnsCard && dnsCard.dataset.domain) {
+        domain = dnsCard.dataset.domain;
+      } else {
+        domain = document.getElementById('domain').value.trim();
+      }
+      console.log('Retrieved domain from fallback:', domain);
+    }
+    
+    // Get the recordValue from the data attribute
+    const dnsCard = document.querySelector('#dns-info .card');
+    let recordValue = '';
+    
+    if (dnsCard && dnsCard.dataset.recordValue) {
+      recordValue = dnsCard.dataset.recordValue;
+    } else {
+      // Only as a fallback, try to get from DOM structure
+      const recordValueElement = document.querySelector('.card-body code:nth-of-type(2)');
+      if (recordValueElement) {
+        recordValue = recordValueElement.textContent.trim();
+      }
+    }
+    
+    console.log('Using record value:', recordValue);
+    
+    // Validate that we have both domain and recordValue
+    if (!domain || !recordValue) {
+      updateStatus('Error: Domain or record value is missing. Please refresh the page and try again.', 'error');
+      if (verifyBtn) {
+        verifyBtn.disabled = false;
+        verifyBtn.innerHTML = 'Try Again';
+      }
+      return;
+    }
     
     updateStatus('Step 1/3: Verifying DNS record... (This may take a few moments)', 'info');
     
     try {
       // First, verify the DNS record
       console.log('Sending check-dns request with:', { domain, recordValue });
-      const checkResponse = await fetch(`/certificates/check-dns`, {
+      
+      // Use relative path or full URL depending on environment
+      const baseUrl = '';
+      
+      const checkResponse = await fetch(`${baseUrl}/certificates/check-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -236,7 +294,7 @@ document.addEventListener('DOMContentLoaded', function() {
       updateStatus('Step 2/3: DNS verified successfully! Generating certificate...', 'success');
       
       // Now, generate the certificate
-      const certResponse = await fetch(`/certificates/verify-dns`, {
+      const certResponse = await fetch(`${baseUrl}/certificates/verify-dns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -287,13 +345,16 @@ document.addEventListener('DOMContentLoaded', function() {
     let pollCount = 0;
     let previousStatus = '';
     
+    // Use relative path for URLs
+    const baseUrl = '';
+    
     updateStatus('Monitoring certificate generation progress...', 'info');
     
     const pollTimer = setInterval(async function() {
       pollCount++;
       
       try {
-        const response = await fetch(`/certificates/status`, {
+        const response = await fetch(`${baseUrl}/certificates/status`, {
           credentials: 'include', // Use include for cross-domain
           cache: 'no-store' // Prevent caching
         });
