@@ -44,14 +44,24 @@ document.addEventListener('DOMContentLoaded', function() {
                   <hr>
                   <div class="mt-3">
                     <p class="mb-3">After adding this record, please allow time for DNS propagation (can take 5 minutes to several hours).</p>
-                    <button id="verify-dns-btn" class="btn btn-primary">
-                      Verify & Complete Certificate
-                    </button>
+                    <div class="d-grid gap-2 d-md-flex">
+                      <button id="check-dns-btn" class="btn btn-secondary">
+                        Check DNS Propagation
+                      </button>
+                      <button id="verify-dns-btn" class="btn btn-primary" disabled>
+                        Generate Certificate
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             `;
             statusContainer.innerHTML += dnsInfoHtml;
+            
+            // Add event listener for check button
+            document.getElementById('check-dns-btn').addEventListener('click', async function() {
+              checkDnsPropagation(domain);
+            });
             
             // Add event listener for verify button
             document.getElementById('verify-dns-btn').addEventListener('click', async function() {
@@ -71,9 +81,51 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
   
+  // Function to check DNS propagation
+  async function checkDnsPropagation(domain) {
+    updateStatus('Checking DNS propagation...', 'info');
+    
+    try {
+      const response = await fetch('/certificates/check-dns', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ domain })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        updateStatus('DNS check successful! DNS record has been properly set.', 'success');
+        // Enable the certificate generation button
+        document.getElementById('verify-dns-btn').disabled = false;
+      } else {
+        updateStatus(`DNS check failed: ${data.message}`, 'error');
+        // Show detailed information if available
+        if (data.details) {
+          const detailsHtml = `
+            <div class="alert alert-warning">
+              <h6>DNS Check Details:</h6>
+              <ul>
+                ${data.details.map(detail => `<li>${detail}</li>`).join('')}
+              </ul>
+            </div>
+          `;
+          statusContainer.innerHTML += detailsHtml;
+        }
+      }
+    } catch (error) {
+      updateStatus(`Error checking DNS: ${error.message}`, 'error');
+    }
+  }
+  
   // Function to verify DNS and complete certificate generation
   async function verifyDnsAndGetCertificate(domain) {
     updateStatus('Verifying DNS records and generating certificate...', 'info');
+    
+    // Disable the button to prevent multiple submissions
+    document.getElementById('verify-dns-btn').disabled = true;
     
     try {
       const response = await fetch('/certificates/verify-dns', {
@@ -87,14 +139,18 @@ document.addEventListener('DOMContentLoaded', function() {
       const data = await response.json();
       
       if (response.ok) {
-        updateStatus('Verification process started. This may take a few minutes...', 'info');
+        updateStatus('Certificate generation started. This may take a few minutes...', 'info');
         // Start polling for status updates
         startStatusPolling();
       } else {
         updateStatus(`Error: ${data.error} - ${data.message}`, 'error');
+        // Re-enable the button in case of error
+        document.getElementById('verify-dns-btn').disabled = false;
       }
     } catch (error) {
       updateStatus(`Error: ${error.message}`, 'error');
+      // Re-enable the button in case of error
+      document.getElementById('verify-dns-btn').disabled = false;
     }
   }
   

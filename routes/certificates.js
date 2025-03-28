@@ -234,4 +234,69 @@ router.get('/.well-known/acme-challenge/:token', (req, res) => {
   res.send(keyAuthorization);
 });
 
+// Add a new endpoint to check DNS propagation
+router.post('/check-dns', async (req, res) => {
+  try {
+    // Get the pending request from session
+    const pendingRequest = req.session.pendingDnsCertRequest;
+    
+    if (!pendingRequest) {
+      return res.status(400).json({
+        success: false,
+        message: 'No pending DNS certificate request found'
+      });
+    }
+    
+    const { domain } = req.body;
+    
+    if (pendingRequest.domain !== domain) {
+      return res.status(400).json({
+        success: false,
+        message: 'Domain mismatch with pending request'
+      });
+    }
+    
+    try {
+      // Check DNS propagation using the stored record value
+      await acmeClient.verifyDnsPropagation(domain, pendingRequest.recordValue);
+      
+      // If we get here, DNS record is correctly set
+      return res.json({
+        success: true,
+        message: 'DNS record verified successfully',
+        domain: domain
+      });
+    } catch (dnsError) {
+      console.log('DNS check failed:', dnsError.message);
+      // Construct a helpful message with details
+      const details = [];
+      
+      if (dnsError.message.includes('DNS record not found')) {
+        details.push('The DNS record could not be found. It may not have propagated yet.');
+        details.push(`Check that you created a TXT record with name: ${pendingRequest.recordName}`);
+        details.push(`And value: ${pendingRequest.recordValue}`);
+        details.push('DNS changes can take 5 minutes to 48 hours to propagate fully.');
+      } else if (dnsError.message.includes('doesn\'t match expected value')) {
+        details.push('The DNS record was found but has an incorrect value.');
+        details.push(`The value should be exactly: ${pendingRequest.recordValue}`);
+        details.push('Make sure there are no extra spaces or quotes in the value.');
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: 'DNS verification failed',
+        details: details.length > 0 ? details : undefined,
+        error: dnsError.message
+      });
+    }
+  } catch (error) {
+    console.error('Error in DNS check:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error checking DNS record',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router; 
