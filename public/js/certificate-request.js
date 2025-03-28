@@ -35,6 +35,9 @@ document.addEventListener('DOMContentLoaded', function() {
       const email = document.getElementById('email').value.trim();
       const challengeType = document.querySelector('input[name="challengeType"]:checked').value;
       
+      // Debug domain before submission
+      console.log('Submitting certificate request for domain:', domain);
+      
       // Validate inputs
       if (!domain) {
         updateStatus('Please enter a domain name', 'error');
@@ -45,6 +48,9 @@ document.addEventListener('DOMContentLoaded', function() {
         updateStatus('Please enter an email address', 'error');
         return;
       }
+      
+      // Remember domain in localStorage as fallback
+      localStorage.setItem('last_certificate_domain', domain);
       
       // Disable form submission button
       const submitBtn = document.getElementById('request-cert-btn');
@@ -95,7 +101,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="spinner-border text-primary" role="status">
                   <span class="visually-hidden">Loading...</span>
                 </div>
-                <p class="mt-2">Preparing DNS challenge. This may take a few moments...</p>
+                <p class="mt-2">Preparing DNS challenge for ${domain}. This may take a few moments...</p>
               `;
               document.getElementById('dns-info').innerHTML = '';
               document.getElementById('dns-info').appendChild(loadingDiv);
@@ -105,7 +111,12 @@ document.addEventListener('DOMContentLoaded', function() {
               await pollForDnsChallenge(domain);
             } else if (data.dnsData) {
               // If we already have DNS data, display it immediately
-              displayDnsRecordInfo(data.dnsData);
+              // Ensure the domain is included in the dnsData
+              const enhancedDnsData = {
+                ...data.dnsData,
+                domain: data.dnsData.domain || domain
+              };
+              displayDnsRecordInfo(enhancedDnsData);
             }
           } else {
             // For HTTP challenge, start polling for certificate status
@@ -124,7 +135,22 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       } catch (error) {
         console.error('Error requesting certificate:', error);
-        updateStatus(`Error: ${error.message}. Please try again or check your server connection.`, 'error');
+        
+        // Special handling for Gateway Timeout errors
+        if (error.message.includes('504') || error.message.includes('Gateway Time-out')) {
+          updateStatus(`Server timeout occurred. The certificate request may still be processing. Please wait 30 seconds and check DNS challenge status...`, 'warning');
+          
+          // After a brief delay, attempt to recover by polling for DNS status
+          setTimeout(() => {
+            const domain = localStorage.getItem('last_certificate_domain') || document.getElementById('domain').value.trim();
+            if (domain) {
+              console.log('Attempting to recover from timeout by polling DNS challenge for:', domain);
+              pollForDnsChallenge(domain);
+            }
+          }, 20000);  // Wait 20 seconds before recovery attempt
+        } else {
+          updateStatus(`Error: ${error.message}. Please try again or check your server connection.`, 'error');
+        }
         
         // Re-enable form submission button
         if (submitBtn) {
@@ -498,10 +524,25 @@ document.addEventListener('DOMContentLoaded', function() {
     let retryCount = 0;
     const baseUrl = '';
     
+    // Log the domain being polled
+    console.log(`Starting to poll for DNS challenge for domain: ${domain}`);
+    
+    // Ensure we have the domain
+    if (!domain) {
+      domain = localStorage.getItem('last_certificate_domain') || document.getElementById('domain').value.trim();
+      console.log(`Retrieved domain from fallback: ${domain}`);
+    }
+    
+    // If we still don't have a domain, show error
+    if (!domain) {
+      updateStatus('Error: Unable to determine domain for DNS challenge. Please refresh and try again.', 'error');
+      return;
+    }
+    
     const pollTimer = setInterval(async () => {
       try {
         retryCount++;
-        console.log(`Polling for DNS challenge details, attempt ${retryCount}/${maxRetries}`);
+        console.log(`Polling for DNS challenge details, attempt ${retryCount}/${maxRetries} for domain: ${domain}`);
         
         const response = await fetch(`${baseUrl}/certificates/dns-challenge-status`, {
           credentials: 'include',
@@ -519,7 +560,14 @@ document.addEventListener('DOMContentLoaded', function() {
           if (data.status === 'ready' && data.dnsData) {
             // Challenge is ready, stop polling and display DNS info
             clearInterval(pollTimer);
-            displayDnsRecordInfo(data.dnsData);
+            
+            // Ensure the domain is included in the dnsData
+            const enhancedDnsData = {
+              ...data.dnsData,
+              domain: data.dnsData.domain || domain
+            };
+            
+            displayDnsRecordInfo(enhancedDnsData);
             updateStatus('DNS challenge prepared successfully. Please add the TXT record to your DNS settings.', 'success');
           } else if (data.status === 'error') {
             // Error occurred, stop polling and show error

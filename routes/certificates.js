@@ -97,18 +97,20 @@ router.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Domain and email are required' });
     }
     
+    // Sanitize domain
+    const cleanDomain = domain.trim().toLowerCase();
+    console.log(`Certificate request received for domain: ${cleanDomain}, email: ${email}, challenge: ${challengeType}`);
+    
     // For DNS challenge, use an immediate response pattern
     if (challengeType === 'dns') {
-      console.log(`Certificate request received for domain: ${domain}, email: ${email}, challenge: DNS`);
-      
       // Send an immediate response to prevent timeout
       res.status(202).json({
         success: true,
         message: 'DNS challenge preparation started',
         status: 'processing',
         dnsData: {
-          domain: domain,
-          recordName: `_acme-challenge.${domain}`,
+          domain: cleanDomain,
+          recordName: `_acme-challenge.${cleanDomain}`,
           recordValue: 'preparing...'  // Placeholder value
         }
       });
@@ -116,15 +118,18 @@ router.post('/generate', async (req, res) => {
       // Process in background
       process.nextTick(async () => {
         try {
-          console.log(`Starting DNS challenge preparation for ${domain}`);
-          const dnsData = await acmeClient.prepareDnsChallengeForDomain(domain, email);
-          console.log(`DNS challenge prepared for ${domain}:`, dnsData);
+          console.log(`Starting DNS challenge preparation for ${cleanDomain}`);
+          const dnsData = await acmeClient.prepareDnsChallengeForDomain(cleanDomain, email);
+          console.log(`DNS challenge prepared for ${cleanDomain}:`, dnsData);
+          
+          // Ensure domain is included in the challenge data
+          dnsData.domain = cleanDomain;
           
           // Store the challenge data in a way that can be retrieved by client polling
           // Store the domain and email in session for the completion endpoint
           if (req.session) {
             req.session.pendingDnsCertRequest = {
-              domain,
+              domain: cleanDomain,
               email,
               recordName: dnsData.recordName,
               recordValue: dnsData.recordValue,
@@ -144,7 +149,7 @@ router.post('/generate', async (req, res) => {
             console.error('Session not available for storing DNS challenge data');
           }
         } catch (error) {
-          console.error(`Background DNS challenge preparation failed for ${domain}:`, error);
+          console.error(`Background DNS challenge preparation failed for ${cleanDomain}:`, error);
           
           // Store the error in session if available
           if (req.session) {
@@ -175,14 +180,14 @@ router.post('/generate', async (req, res) => {
       // Continue processing in the background (after response is sent)
       process.nextTick(async () => {
         try {
-          const result = await acmeClient.generateCertificateHttp(domain, email);
+          const result = await acmeClient.generateCertificateHttp(cleanDomain, email);
           
           // Save certificate info to database
           const certificates = getCertificates();
           const newCert = {
             id: Date.now().toString(),
             userId: req.session.user ? req.session.user.id : 'guest',
-            domain,
+            domain: cleanDomain,
             createdAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
             certificatePath: result.certificatePath,
@@ -195,7 +200,7 @@ router.post('/generate', async (req, res) => {
           
           // Store the completion info in session
           req.session.completedCertificate = {
-            domain,
+            domain: cleanDomain,
             id: newCert.id,
             certificatePath: result.certificatePath
           };
@@ -628,6 +633,17 @@ router.get('/dns-challenge-status', (req, res) => {
       });
     }
     
+    // Ensure domain exists
+    const domain = pendingRequest.domain;
+    if (!domain) {
+      console.error('Domain missing in pendingRequest:', pendingRequest);
+      return res.json({
+        success: false,
+        status: 'error',
+        message: 'Domain information is missing in the session'
+      });
+    }
+    
     // Check if the challenge preparation is complete
     if (pendingRequest.prepared) {
       return res.json({
@@ -635,7 +651,7 @@ router.get('/dns-challenge-status', (req, res) => {
         status: 'ready',
         message: 'DNS challenge prepared successfully',
         dnsData: {
-          domain: pendingRequest.domain,
+          domain: domain,
           recordName: pendingRequest.recordName,
           recordValue: pendingRequest.recordValue
         },
@@ -651,7 +667,7 @@ router.get('/dns-challenge-status', (req, res) => {
         success: true,
         status: 'preparing',
         message: 'DNS challenge preparation in progress',
-        domain: pendingRequest.domain
+        domain: domain
       });
     }
   } catch (error) {

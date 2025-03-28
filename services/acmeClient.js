@@ -353,6 +353,10 @@ async function generateCertificateHttp(domain, email) {
 // Prepare DNS challenge - returns data for DNS record
 async function prepareDnsChallengeForDomain(domain, email) {
   try {
+    // Sanitize domain input
+    domain = domain.trim().toLowerCase();
+    console.log(`Preparing DNS challenge for domain: ${domain}`);
+    
     // Get client with registered account
     const client = await getClient(email);
     const { csrPem, privateKeyPem } = generateCsr(domain);
@@ -367,6 +371,9 @@ async function prepareDnsChallengeForDomain(domain, email) {
     
     // Prepare DNS challenge
     const dnsData = await prepareDnsChallenge(client, domain, order);
+    
+    // Add domain to the response object
+    dnsData.domain = domain;
     
     // Log the actual values being returned (only in development)
     console.log('\n==== DNS Challenge Information ====');
@@ -392,6 +399,7 @@ async function prepareDnsChallengeForDomain(domain, email) {
       console.log(`Fallback DNS challenge: ${recordName} -> ${fallbackValue}`);
       
       return {
+        domain: domain,  // Include domain in the fallback response
         recordName: recordName,
         recordValue: fallbackValue
       };
