@@ -208,12 +208,13 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Function to verify DNS and complete certificate generation
   async function verifyDnsAndGetCertificate(domain) {
-    updateStatus('Verifying DNS records and generating certificate...', 'info');
+    updateStatus('Generating certificate using verified DNS challenge...', 'info');
     
     // Disable the button to prevent multiple submissions
     document.getElementById('verify-dns-btn').disabled = true;
     
     try {
+      // Add flag to indicate we want to use the verified challenge (not create a new one)
       const response = await fetch(`${API_URL}/certificates/verify-dns`, {
         method: 'POST',
         headers: {
@@ -221,7 +222,10 @@ document.addEventListener('DOMContentLoaded', function() {
           'Cache-Control': 'no-cache, no-store',
           'Pragma': 'no-cache'
         },
-        body: JSON.stringify({ domain }),
+        body: JSON.stringify({ 
+          domain,
+          useVerifiedChallenge: true  // Flag to reuse the verified challenge
+        }),
         credentials: 'include' // Use include for cross-domain
       });
       

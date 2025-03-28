@@ -419,11 +419,57 @@ function getChallengeResponse(token) {
   return challengeResponses.get(token);
 }
 
+// Generate certificate using pre-verified DNS challenge
+async function generateCertificateWithVerifiedDns(domain, email) {
+  try {
+    // Get client with registered account
+    const client = await getClient(email);
+    
+    // Get stored CSR and order
+    const csrData = dnsChallengeValues.get(`${domain}_csr`);
+    if (!csrData) {
+      throw new Error(`No pending certificate request found for domain ${domain}`);
+    }
+    
+    const { csrPem, privateKeyPem, order } = csrData;
+    
+    console.log('Generating certificate with pre-verified DNS challenge');
+    console.log('Finalizing order and getting certificate...');
+    
+    // Skip challenge completion and directly finalize order
+    await client.finalizeOrder(order, csrPem);
+    const certificate = await client.getCertificate(order);
+    
+    // Save the certificate and private key to files
+    const domainSafe = domain.replace(/\*/g, 'wildcard').replace(/[^a-z0-9]/gi, '_');
+    const timestamp = Date.now();
+    const certPath = path.join(CERT_DIR, `${domainSafe}_${timestamp}.cert.pem`);
+    const keyPath = path.join(CERT_DIR, `${domainSafe}_${timestamp}.key.pem`);
+    
+    fs.writeFileSync(certPath, certificate);
+    fs.writeFileSync(keyPath, privateKeyPem);
+    
+    // Clean up
+    dnsChallengeValues.delete(`${domain}_csr`);
+    
+    return {
+      certificatePath: certPath,
+      privateKeyPath: keyPath,
+      certificate,
+      privateKey: privateKeyPem
+    };
+  } catch (error) {
+    console.error('Error generating certificate with verified DNS:', error);
+    throw error;
+  }
+}
+
 module.exports = {
   generateCertificate,
   generateCertificateHttp,
   prepareDnsChallengeForDomain,
   completeDnsChallengeAndGetCertificate,
   getChallengeResponse,
-  verifyDnsPropagation
+  verifyDnsPropagation,
+  generateCertificateWithVerifiedDns
 }; 

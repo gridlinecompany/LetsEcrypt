@@ -210,7 +210,7 @@ router.post('/verify-dns', async (req, res) => {
       });
     }
     
-    const { domain } = req.body;
+    const { domain, useVerifiedChallenge } = req.body;
     
     if (!domain) {
       return res.status(400).json({
@@ -233,14 +233,25 @@ router.post('/verify-dns', async (req, res) => {
     // Start the verification process but respond quickly
     res.status(202).json({
       success: true,
-      message: 'Verification and certificate generation started. This may take a few minutes.',
+      message: 'Certificate generation started. This may take a few minutes.',
       status: 'processing'
     });
     
     // Continue processing in the background (after response is sent)
     process.nextTick(async () => {
       try {
-        const result = await acmeClient.completeDnsChallengeAndGetCertificate(domain, email);
+        // Check if we should skip challenge verification (already verified)
+        let result;
+        
+        if (useVerifiedChallenge) {
+          console.log('Using previously verified DNS challenge - skipping verification step');
+          // Use a modified function that skips the verification step
+          result = await acmeClient.generateCertificateWithVerifiedDns(domain, email);
+        } else {
+          // Regular flow - verify challenge first
+          result = await acmeClient.completeDnsChallengeAndGetCertificate(domain, email);
+        }
+        
         console.log('Certificate generated successfully:', result.certificatePath);
         
         // Save certificate info to database
@@ -472,6 +483,26 @@ router.post('/check-dns', async (req, res) => {
       await acmeClient.verifyDnsPropagation(domain, recordValue);
       
       // If we get here, DNS record is correctly set
+      // Store verification status in session
+      if (pendingRequest) {
+        pendingRequest.dnsVerified = true;
+        pendingRequest.verificationTime = Date.now();
+        
+        // Save session explicitly
+        await new Promise((resolve, reject) => {
+          req.session.save(err => {
+            if (err) {
+              console.error('Error saving DNS verification status to session:', err);
+              reject(err);
+            } else {
+              console.log('DNS verification status saved to session');
+              resolve();
+            }
+          });
+        });
+      }
+      
+      // Send success response after saving session
       return res.json({
         success: true,
         message: 'DNS record verified successfully',
