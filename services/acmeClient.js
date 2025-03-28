@@ -174,21 +174,44 @@ async function completeDnsChallenge(client, domain) {
     console.log('Notifying Let\'s Encrypt to verify the challenge...');
     await client.completeChallenge(challengeInfo.challenge);
     
-    // Wait for the CA to validate the challenge
+    // Wait for the CA to validate the challenge - using a more robust approach
     console.log('Waiting for Let\'s Encrypt to validate the challenge...');
+    
+    // First attempt validation with standard timeout
     try {
       await client.waitForValidStatus(challengeInfo.challenge);
       console.log('DNS challenge validated successfully!');
     } catch (validationError) {
-      // If validation fails, wait longer and try again one more time
-      console.log('First validation attempt failed. Waiting 30 seconds for further DNS propagation and trying again...');
-      await new Promise(resolve => setTimeout(resolve, 30000)); // 30 second delay
+      // First validation attempt failed
+      console.log('First validation attempt failed. Waiting 60 seconds for further DNS propagation and trying again...');
+      console.log(`Error was: ${validationError.message}`);
       
-      // Try completing the challenge again
-      await client.completeChallenge(challengeInfo.challenge);
-      await client.waitForValidStatus(challengeInfo.challenge);
-      console.log('DNS challenge validated successfully on second attempt!');
+      // Wait 60 seconds for DNS propagation
+      await new Promise(resolve => setTimeout(resolve, 60000)); 
+      
+      try {
+        // Try completing the challenge again
+        await client.completeChallenge(challengeInfo.challenge);
+        await client.waitForValidStatus(challengeInfo.challenge);
+        console.log('DNS challenge validated successfully on second attempt!');
+      } catch (secondError) {
+        console.log('Second validation attempt failed. Waiting an additional 120 seconds...');
+        console.log(`Error was: ${secondError.message}`);
+        
+        // Wait 2 minutes more for final attempt
+        await new Promise(resolve => setTimeout(resolve, 120000));
+        
+        // Final attempt
+        await client.completeChallenge(challengeInfo.challenge);
+        await client.waitForValidStatus(challengeInfo.challenge);
+        console.log('DNS challenge validated successfully on final attempt!');
+      }
     }
+    
+    // Important: Wait an additional period AFTER validation before trying to finalize
+    // This ensures Let's Encrypt has fully registered the validation
+    console.log('Challenge validated! Waiting an additional 10 seconds before finalizing...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
     
     // Clean up
     dnsChallengeValues.delete(domain);
@@ -198,16 +221,12 @@ async function completeDnsChallenge(client, domain) {
     console.error('DNS challenge verification failed:', error);
     // More specific error message based on the type of error
     if (error.message.includes('Invalid response')) {
-      console.error('The DNS record may not have propagated yet or is incorrect.');
-      console.error('Please check:');
-      console.error(`1. The TXT record name is exactly: _acme-challenge.${domain}`);
-      console.error(`2. The TXT record value is exactly: ${challengeInfo.dnsRecordValue}`);
-      console.error('3. The record has had enough time to propagate (can take up to 24-48 hours)');
-      console.error('4. There are no quote marks or other formatting in the TXT value');
-    } else if (error.message.includes('timeout')) {
-      console.error('The verification timed out. DNS propagation can take time.');
+      throw new Error('DNS verification failed: The Let\'s Encrypt server could not find the expected TXT record. Make sure you added the record correctly and it has propagated.');
+    } else if (error.message.includes('Order\'s status')) {
+      throw new Error('DNS verification timing issue: Let\'s Encrypt hasn\'t fully processed the challenge yet. Please try again in a few minutes.');
+    } else {
+      throw error;
     }
-    throw error;
   }
 }
 
@@ -434,10 +453,82 @@ async function generateCertificateWithVerifiedDns(domain, email) {
     const { csrPem, privateKeyPem, order } = csrData;
     
     console.log('Generating certificate with pre-verified DNS challenge');
+    
+    // Get the current status of the order directly from Let's Encrypt
+    const updatedOrder = await client.getOrder(order);
+    console.log(`Current order status: ${updatedOrder.status}`);
+    
+    if (updatedOrder.status === 'pending') {
+      console.log('Order is still pending. Trying to check the authorization status...');
+      
+      // Get authorizations and check their status
+      const authorizations = await client.getAuthorizations(order);
+      const dnsAuthz = authorizations[0];
+      console.log(`Authorization status: ${dnsAuthz.status}`);
+      
+      if (dnsAuthz.status === 'pending') {
+        // The authorization is still pending, we need to complete the challenge again
+        console.log('Authorization still pending. Completing challenge again...');
+        
+        // Get the DNS challenge
+        const dnsChallenge = dnsAuthz.challenges.find(c => c.type === 'dns-01');
+        if (!dnsChallenge) {
+          throw new Error('DNS challenge not found in authorization');
+        }
+        
+        // Complete the challenge again
+        await client.completeChallenge(dnsChallenge);
+        
+        // Wait for validation
+        console.log('Waiting for Let\'s Encrypt to validate the challenge...');
+        try {
+          await client.waitForValidStatus(dnsChallenge);
+          console.log('DNS challenge validated successfully!');
+        } catch (error) {
+          console.log(`Validation error: ${error.message}`);
+          
+          // Wait 60 seconds and try one more time
+          console.log('Waiting 60 seconds for further DNS propagation...');
+          await new Promise(resolve => setTimeout(resolve, 60000));
+          
+          await client.completeChallenge(dnsChallenge);
+          await client.waitForValidStatus(dnsChallenge);
+        }
+        
+        // Wait an additional period to ensure Let's Encrypt has registered the validation
+        console.log('Waiting an additional 10 seconds before finalizing...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      }
+    } else if (updatedOrder.status === 'ready') {
+      console.log('Order is ready for finalization.');
+    } else if (updatedOrder.status === 'valid') {
+      console.log('Order is already valid!');
+    } else {
+      throw new Error(`Order is in an unexpected state: ${updatedOrder.status}`);
+    }
+    
+    // Now finalize the order
     console.log('Finalizing order and getting certificate...');
     
-    // Skip challenge completion and directly finalize order
-    await client.finalizeOrder(order, csrPem);
+    try {
+      await client.finalizeOrder(order, csrPem);
+    } catch (finalizeError) {
+      if (finalizeError.message.includes('Order\'s status')) {
+        console.log('Order status not ready for finalization. Waiting 30 seconds...');
+        await new Promise(resolve => setTimeout(resolve, 30000));
+        
+        // Check order status again
+        const recheckOrder = await client.getOrder(order);
+        console.log(`Order status after waiting: ${recheckOrder.status}`);
+        
+        // Try again
+        await client.finalizeOrder(order, csrPem);
+      } else {
+        throw finalizeError;
+      }
+    }
+    
+    // Get the certificate
     const certificate = await client.getCertificate(order);
     
     // Save the certificate and private key to files
