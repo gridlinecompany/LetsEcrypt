@@ -74,17 +74,35 @@ async function getClient(email) {
 
 // Generate a CSR (Certificate Signing Request)
 function generateCsr(domain) {
-  const keys = forge.pki.rsa.generateKeyPair(2048);
-  const csr = forge.pki.createCertificationRequest();
-  
-  csr.publicKey = keys.publicKey;
-  csr.setSubject([{ name: 'commonName', value: domain }]);
-  csr.sign(keys.privateKey);
-  
-  const csrPem = forge.pki.certificationRequestToPem(csr);
-  const privateKeyPem = forge.pki.privateKeyToPem(keys.privateKey);
-  
-  return { csrPem, privateKeyPem };
+  try {
+    const keys = forge.pki.rsa.generateKeyPair(2048);
+    const csr = forge.pki.createCertificationRequest();
+    
+    csr.publicKey = keys.publicKey;
+    csr.setSubject([{ name: 'commonName', value: domain }]);
+    
+    // Explicitly set the signature algorithm to SHA-256 with RSA, which is supported by Let's Encrypt
+    csr.signingAlgorithm = {
+      name: 'RSASSA-PKCS1-v1_5',
+      hash: { name: 'sha256' }
+    };
+    
+    // Set message digest algorithm explicitly
+    const md = forge.md.sha256.create();
+    
+    // Sign the CSR with SHA-256
+    csr.sign(keys.privateKey, md);
+    
+    const csrPem = forge.pki.certificationRequestToPem(csr);
+    const privateKeyPem = forge.pki.privateKeyToPem(keys.privateKey);
+    
+    console.log('CSR generated successfully with SHA-256 signature algorithm');
+    
+    return { csrPem, privateKeyPem };
+  } catch (error) {
+    console.error('Error generating CSR:', error);
+    throw new Error(`Failed to generate CSR: ${error.message}`);
+  }
 }
 
 // HTTP-01 challenge verification
