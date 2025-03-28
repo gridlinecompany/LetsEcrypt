@@ -97,43 +97,72 @@ router.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Domain and email are required' });
     }
     
-    // Start the process but don't wait for it to complete
+    // For DNS challenge, use an immediate response pattern
     if (challengeType === 'dns') {
-      // For DNS challenge, just prepare the challenge and return the info
-      const dnsData = await acmeClient.prepareDnsChallengeForDomain(domain, email);
+      console.log(`Certificate request received for domain: ${domain}, email: ${email}, challenge: DNS`);
       
-      // Store the domain and email in session for the completion endpoint
-      req.session.pendingDnsCertRequest = {
-        domain,
-        email,
-        recordName: dnsData.recordName,
-        recordValue: dnsData.recordValue,
-        requestTime: Date.now()
-      };
-      
-      // Explicitly save the session to ensure data is persisted
-      await new Promise((resolve, reject) => {
-        req.session.save(err => {
-          if (err) {
-            console.error('Session save error:', err);
-            reject(err);
-          } else {
-            console.log('Session saved successfully with pendingDnsCertRequest');
-            resolve();
-          }
-        });
-      });
-      
-      return res.status(200).json({
+      // Send an immediate response to prevent timeout
+      res.status(202).json({
         success: true,
-        message: 'DNS challenge prepared successfully',
-        dnsData,
-        nextStep: {
-          action: 'Create DNS TXT record with your DNS provider',
-          verifyEndpoint: '/certificates/verify-dns',
-          verificationMethod: 'Once the DNS record is set, visit the verification endpoint'
+        message: 'DNS challenge preparation started',
+        status: 'processing',
+        dnsData: {
+          domain: domain,
+          recordName: `_acme-challenge.${domain}`,
+          recordValue: 'preparing...'  // Placeholder value
         }
       });
+      
+      // Process in background
+      process.nextTick(async () => {
+        try {
+          console.log(`Starting DNS challenge preparation for ${domain}`);
+          const dnsData = await acmeClient.prepareDnsChallengeForDomain(domain, email);
+          console.log(`DNS challenge prepared for ${domain}:`, dnsData);
+          
+          // Store the challenge data in a way that can be retrieved by client polling
+          // Store the domain and email in session for the completion endpoint
+          if (req.session) {
+            req.session.pendingDnsCertRequest = {
+              domain,
+              email,
+              recordName: dnsData.recordName,
+              recordValue: dnsData.recordValue,
+              requestTime: Date.now(),
+              prepared: true
+            };
+            
+            // Explicitly save the session to ensure data is persisted
+            req.session.save(err => {
+              if (err) {
+                console.error('Session save error:', err);
+              } else {
+                console.log('Session saved successfully with pendingDnsCertRequest');
+              }
+            });
+          } else {
+            console.error('Session not available for storing DNS challenge data');
+          }
+        } catch (error) {
+          console.error(`Background DNS challenge preparation failed for ${domain}:`, error);
+          
+          // Store the error in session if available
+          if (req.session) {
+            req.session.certificateError = {
+              message: error.message,
+              details: extractErrorDetails(error)
+            };
+            
+            req.session.save(err => {
+              if (err) {
+                console.error('Error saving session after challenge preparation error:', err);
+              }
+            });
+          }
+        }
+      });
+      
+      return;
     } else {
       // For HTTP challenge, use a job queue or process in background
       // Respond immediately to prevent timeout
@@ -568,6 +597,69 @@ router.post('/check-dns', async (req, res) => {
       message: 'Error checking DNS record',
       error: error.message,
       timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Add an endpoint to check the DNS challenge preparation status
+router.get('/dns-challenge-status', (req, res) => {
+  try {
+    // Get the pending request from session
+    const pendingRequest = req.session.pendingDnsCertRequest;
+    
+    // Check for errors
+    const certError = req.session.certificateError;
+    
+    if (certError) {
+      // Return the error
+      return res.json({
+        success: false,
+        status: 'error',
+        message: certError.message,
+        details: certError.details
+      });
+    }
+    
+    if (!pendingRequest) {
+      return res.json({
+        success: false,
+        status: 'not_found',
+        message: 'No pending DNS challenge found'
+      });
+    }
+    
+    // Check if the challenge preparation is complete
+    if (pendingRequest.prepared) {
+      return res.json({
+        success: true,
+        status: 'ready',
+        message: 'DNS challenge prepared successfully',
+        dnsData: {
+          domain: pendingRequest.domain,
+          recordName: pendingRequest.recordName,
+          recordValue: pendingRequest.recordValue
+        },
+        nextStep: {
+          action: 'Create DNS TXT record with your DNS provider',
+          verifyEndpoint: '/certificates/verify-dns',
+          verificationMethod: 'Once the DNS record is set, visit the verification endpoint'
+        }
+      });
+    } else {
+      // Challenge preparation is still in progress
+      return res.json({
+        success: true,
+        status: 'preparing',
+        message: 'DNS challenge preparation in progress',
+        domain: pendingRequest.domain
+      });
+    }
+  } catch (error) {
+    console.error('Error checking DNS challenge status:', error);
+    res.status(500).json({
+      success: false,
+      status: 'error',
+      message: 'Error checking DNS challenge status'
     });
   }
 });

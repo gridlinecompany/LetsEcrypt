@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Use relative path for URLs
         const baseUrl = '';
         
-        // Make API request to start certificate request - using correct endpoint
+        // Make API request to start certificate request
         const response = await fetch(`${baseUrl}/certificates/generate`, {
           method: 'POST',
           headers: {
@@ -82,24 +82,31 @@ document.addEventListener('DOMContentLoaded', function() {
         const data = await response.json();
         console.log('Certificate request response:', data);
         
-        // Re-enable form submission button
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.innerHTML = 'Request Certificate';
-        }
-        
         if (data.success) {
           if (challengeType === 'dns') {
-            // For DNS challenge, access the correct property from response
-            // Extract the dnsData from the response
-            const dnsData = data.dnsData || {};
-            
-            // Add domain if it's missing in dnsData
-            if (!dnsData.domain) {
-              dnsData.domain = domain;
+            // For DNS challenge, we now need to poll for challenge details
+            if (data.status === 'processing') {
+              updateStatus('DNS challenge preparation started. Please wait...', 'info');
+              
+              // Show a loading indicator
+              const loadingDiv = document.createElement('div');
+              loadingDiv.className = 'text-center my-4';
+              loadingDiv.innerHTML = `
+                <div class="spinner-border text-primary" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2">Preparing DNS challenge. This may take a few moments...</p>
+              `;
+              document.getElementById('dns-info').innerHTML = '';
+              document.getElementById('dns-info').appendChild(loadingDiv);
+              document.getElementById('dns-info').classList.remove('d-none');
+              
+              // Start polling for challenge details
+              await pollForDnsChallenge(domain);
+            } else if (data.dnsData) {
+              // If we already have DNS data, display it immediately
+              displayDnsRecordInfo(data.dnsData);
             }
-            
-            displayDnsRecordInfo(dnsData);
           } else {
             // For HTTP challenge, start polling for certificate status
             updateStatus('HTTP challenge initialized. Attempting verification...', 'info');
@@ -108,6 +115,12 @@ document.addEventListener('DOMContentLoaded', function() {
           }
         } else {
           updateStatus(`Error: ${data.message || 'Unknown error occurred'}`, 'error');
+          
+          // Re-enable form submission button
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Request Certificate';
+          }
         }
       } catch (error) {
         console.error('Error requesting certificate:', error);
@@ -476,5 +489,80 @@ document.addEventListener('DOMContentLoaded', function() {
     // Store the timer IDs in global variables so we can cancel them if needed
     window.currentPollTimer = pollTimer;
     window.currentTimerInterval = timerInterval;
+  }
+
+  // Function to poll for DNS challenge details
+  async function pollForDnsChallenge(domain) {
+    const maxRetries = 15;  // Maximum number of retries (2 minutes total with 8s interval)
+    const pollInterval = 8000;  // Poll every 8 seconds
+    let retryCount = 0;
+    const baseUrl = '';
+    
+    const pollTimer = setInterval(async () => {
+      try {
+        retryCount++;
+        console.log(`Polling for DNS challenge details, attempt ${retryCount}/${maxRetries}`);
+        
+        const response = await fetch(`${baseUrl}/certificates/dns-challenge-status`, {
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('DNS challenge status response:', data);
+        
+        if (data.success) {
+          if (data.status === 'ready' && data.dnsData) {
+            // Challenge is ready, stop polling and display DNS info
+            clearInterval(pollTimer);
+            displayDnsRecordInfo(data.dnsData);
+            updateStatus('DNS challenge prepared successfully. Please add the TXT record to your DNS settings.', 'success');
+          } else if (data.status === 'error') {
+            // Error occurred, stop polling and show error
+            clearInterval(pollTimer);
+            updateStatus(`Error preparing DNS challenge: ${data.message}`, 'error');
+            
+            // Re-enable the request button
+            const submitBtn = document.getElementById('request-cert-btn');
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.innerHTML = 'Request Certificate';
+            }
+          }
+          // If still preparing, continue polling
+        } else {
+          if (retryCount >= maxRetries) {
+            // Reached max retries, stop polling
+            clearInterval(pollTimer);
+            updateStatus('DNS challenge preparation is taking longer than expected. Please refresh the page and try again.', 'warning');
+            
+            // Re-enable the request button
+            const submitBtn = document.getElementById('request-cert-btn');
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.innerHTML = 'Request Certificate';
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error polling for DNS challenge:', error);
+        
+        if (retryCount >= maxRetries) {
+          clearInterval(pollTimer);
+          updateStatus(`Error polling for DNS challenge: ${error.message}. Please refresh and try again.`, 'error');
+          
+          // Re-enable the request button
+          const submitBtn = document.getElementById('request-cert-btn');
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Request Certificate';
+          }
+        }
+      }
+    }, pollInterval);
   }
 }); 
