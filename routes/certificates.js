@@ -203,12 +203,15 @@ router.post('/verify-dns', async (req, res) => {
     const pendingRequest = req.session.pendingDnsCertRequest;
     
     if (!pendingRequest) {
+      console.error('No pending DNS certificate request found in session');
       return res.status(400).json({
         success: false,
         error: 'No pending DNS certificate request found',
         message: 'Please start a new certificate request'
       });
     }
+    
+    console.log('Found pending DNS certificate request:', JSON.stringify(pendingRequest));
     
     const { domain, useVerifiedChallenge } = req.body;
     
@@ -228,7 +231,21 @@ router.post('/verify-dns', async (req, res) => {
       });
     }
     
-    const { email } = pendingRequest;
+    // Make sure we have an email - either from pendingRequest or fallback to user's email
+    let email = pendingRequest.email;
+    if (!email && req.session.user && req.session.user.email) {
+      email = req.session.user.email;
+      console.log(`Using user's email as fallback: ${email}`);
+    }
+    
+    if (!email) {
+      console.error('No email found for certificate generation');
+      return res.status(400).json({
+        success: false,
+        error: 'Missing email',
+        message: 'Email is required for certificate generation'
+      });
+    }
     
     // Start the verification process but respond quickly
     res.status(202).json({
@@ -240,6 +257,9 @@ router.post('/verify-dns', async (req, res) => {
     // Continue processing in the background (after response is sent)
     process.nextTick(async () => {
       try {
+        console.log(`Starting certificate generation for domain: ${domain}, email: ${email}`);
+        console.log(`Using verified challenge: ${useVerifiedChallenge ? 'yes' : 'no'}`);
+        
         // Check if we should skip challenge verification (already verified)
         let result;
         
@@ -249,6 +269,7 @@ router.post('/verify-dns', async (req, res) => {
           result = await acmeClient.generateCertificateWithVerifiedDns(domain, email);
         } else {
           // Regular flow - verify challenge first
+          console.log('Verifying DNS challenge before generating certificate');
           result = await acmeClient.completeDnsChallengeAndGetCertificate(domain, email);
         }
         
@@ -289,7 +310,8 @@ router.post('/verify-dns', async (req, res) => {
           }
         });
       } catch (error) {
-        console.error('Background DNS verification failed:', error);
+        console.error('Background certificate generation failed:', error);
+        console.error('Error stack:', error.stack);
         
         // Store the error in session
         req.session.certificateError = {
@@ -309,7 +331,12 @@ router.post('/verify-dns', async (req, res) => {
     });
   } catch (error) {
     console.error('Error in DNS verification:', error);
-    res.status(500).json({ error: 'DNS verification failed', message: error.message });
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: 'DNS verification failed', 
+      message: error.message 
+    });
   }
 });
 

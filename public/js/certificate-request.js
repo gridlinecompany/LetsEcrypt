@@ -187,6 +187,11 @@ document.addEventListener('DOMContentLoaded', function() {
       clearInterval(window.currentPollTimer);
       window.currentPollTimer = null;
     }
+    
+    if (window.currentTimerInterval) {
+      clearInterval(window.currentTimerInterval);
+      window.currentTimerInterval = null;
+    }
   }
   
   // Combined function for DNS verification and certificate generation
@@ -340,23 +345,57 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Function to poll for certificate status
   function startStatusPolling() {
-    const pollInterval = 5000; // 5 seconds
-    const maxPolls = 60; // Max 5 minutes of polling
+    const pollInterval = 8000; // 8 seconds - more patient polling
+    const maxPolls = 120; // Max 16 minutes of polling (increased from 5 minutes)
     let pollCount = 0;
     let previousStatus = '';
     
     // Use relative path for URLs
     const baseUrl = '';
     
-    updateStatus('Monitoring certificate generation progress...', 'info');
+    updateStatus('Certificate generation started. This process can take 5-10 minutes...', 'info');
+    
+    // Add a timer display to show progress
+    let startTime = Date.now();
+    const timerDiv = document.createElement('div');
+    timerDiv.className = 'mt-3 text-center';
+    timerDiv.innerHTML = `
+      <div class="progress mb-2">
+        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+      </div>
+      <small class="text-muted">Time elapsed: 0:00 - Please be patient, certificate generation can take several minutes</small>
+    `;
+    statusContainer.appendChild(timerDiv);
+    
+    // Update timer function
+    function updateTimer() {
+      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+      const minutes = Math.floor(elapsedSeconds / 60);
+      const seconds = elapsedSeconds % 60;
+      const progressPercent = Math.min(100, (pollCount / maxPolls) * 100);
+      
+      const progressBar = timerDiv.querySelector('.progress-bar');
+      if (progressBar) {
+        progressBar.style.width = `${progressPercent}%`;
+      }
+      
+      const timeDisplay = timerDiv.querySelector('small');
+      if (timeDisplay) {
+        timeDisplay.textContent = `Time elapsed: ${minutes}:${seconds.toString().padStart(2, '0')} - Please be patient, certificate generation can take several minutes`;
+      }
+    }
+    
+    // Start timer updates
+    const timerInterval = setInterval(updateTimer, 1000);
     
     const pollTimer = setInterval(async function() {
       pollCount++;
+      updateTimer();
       
       try {
         const response = await fetch(`${baseUrl}/certificates/status`, {
-          credentials: 'include', // Use include for cross-domain
-          cache: 'no-store' // Prevent caching
+          credentials: 'include',
+          cache: 'no-store'
         });
         
         // Check if response is OK before trying to parse JSON
@@ -372,6 +411,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (data.status === 'no_pending_requests') {
           // If no pending requests, the certificate generation is likely complete
           clearInterval(pollTimer);
+          clearInterval(timerInterval);
           updateStatus('Certificate generation complete! Redirecting to certificates page...', 'success');
           // Redirect to certificates page after 3 seconds
           setTimeout(() => {
@@ -380,6 +420,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (data.status === 'completed') {
           // If we have a completed status, show success and redirect
           clearInterval(pollTimer);
+          clearInterval(timerInterval);
           updateStatus(`Certificate for ${data.domain} has been successfully generated!`, 'success');
           setTimeout(() => {
             window.location.href = '/certificates';
@@ -387,16 +428,37 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (data.status === 'error') {
           // If we have an error status, show error and stop polling
           clearInterval(pollTimer);
+          clearInterval(timerInterval);
           updateStatus(`Error: ${data.message}`, 'error');
+          if (data.details && data.details.length > 0) {
+            const detailsList = document.createElement('ul');
+            detailsList.className = 'mt-2';
+            data.details.forEach(detail => {
+              const li = document.createElement('li');
+              li.textContent = detail;
+              detailsList.appendChild(li);
+            });
+            statusContainer.appendChild(detailsList);
+          }
         } else if (data.status === 'pending') {
           // Only show update if status changed to avoid flooding
           if (previousStatus !== JSON.stringify(data)) {
-            updateStatus(`Certificate generation in progress for ${data.domain}. Please wait...`, 'info');
+            // Show different messages based on elapsed time
+            if (pollCount < 6) {
+              updateStatus(`Certificate generation in progress for ${data.domain}. Starting verification...`, 'info');
+            } else if (pollCount < 12) {
+              updateStatus(`Certificate generation in progress for ${data.domain}. Validating DNS records with Let's Encrypt...`, 'info');
+            } else if (pollCount < 24) {
+              updateStatus(`Certificate generation in progress for ${data.domain}. Waiting for DNS validation to complete...`, 'info');
+            } else {
+              updateStatus(`Certificate generation in progress for ${data.domain}. This can take several minutes, please be patient...`, 'info');
+            }
             previousStatus = JSON.stringify(data);
           }
         } else if (pollCount >= maxPolls) {
           // Stop polling after max attempts
           clearInterval(pollTimer);
+          clearInterval(timerInterval);
           updateStatus('Certificate process is taking longer than expected. Please check your certificates page later.', 'warning');
         }
       } catch (error) {
@@ -405,12 +467,14 @@ document.addEventListener('DOMContentLoaded', function() {
         // After 3 consecutive errors, stop polling
         if (pollCount % 3 === 0) {
           clearInterval(pollTimer);
+          clearInterval(timerInterval);
           updateStatus('Error checking certificate status. Please check your certificates page manually.', 'error');
         }
       }
     }, pollInterval);
     
-    // Store the timer ID in a global variable so we can cancel it if needed
+    // Store the timer IDs in global variables so we can cancel them if needed
     window.currentPollTimer = pollTimer;
+    window.currentTimerInterval = timerInterval;
   }
 }); 
