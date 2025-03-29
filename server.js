@@ -28,7 +28,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Session setup
 app.use(session({
   store: new fileStore({
-    path: path.join(__dirname, 'sessions'),
+    path: '/tmp/letsecrypt-sessions',
     ttl: 86400,  // 24 hours in seconds
     retries: 5,
     reapInterval: 3600  // 1 hour in seconds
